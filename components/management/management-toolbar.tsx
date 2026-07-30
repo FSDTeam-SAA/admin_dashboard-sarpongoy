@@ -10,7 +10,9 @@ interface ManagementToolbarProps {
   onSearchChange: (value: string) => void;
   onOpenFilter?: () => void;
   onOpenCreate?: () => void;
+  onOpenBulkCreate?: () => void;
   addLabel?: string;
+  bulkAddLabel?: string;
   className?: string;
 }
 
@@ -19,7 +21,9 @@ export function ManagementToolbar({
   onSearchChange,
   onOpenFilter,
   onOpenCreate,
+  onOpenBulkCreate,
   addLabel = "Add New",
+  bulkAddLabel = "Bulk Add",
   className,
 }: ManagementToolbarProps) {
   return (
@@ -55,7 +59,17 @@ export function ManagementToolbar({
           {addLabel}
         </Button>
       ) : null}
+      {onOpenBulkCreate ? (
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={onOpenBulkCreate}
+          className="h-12 gap-2 text-[20px]"
+        >
+          <Plus className="h-4 w-4" />
+          {bulkAddLabel}
+        </Button>
+      ) : null}
     </div>
   );
 }
-

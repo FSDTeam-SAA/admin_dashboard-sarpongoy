@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, Loader2, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
+  createTeachersBulk,
   createTeacher,
   deleteTeacher,
   fetchCourses,
@@ -15,7 +16,9 @@ import {
   fetchTeachers,
   getApiErrorMessage,
 } from "@/lib/api";
+import type { BulkTeacherPayload } from "@/lib/api";
 import { GRADE_LEVELS } from "@/lib/constants";
+import { hasCsvHeader, parseCsvRows } from "@/lib/csv";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { ManagementToolbar } from "@/components/management/management-toolbar";
 import { SectionHeader } from "@/components/management/section-header";
@@ -100,6 +103,9 @@ export default function TeachersPage() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [bulkCreateOpen, setBulkCreateOpen] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkFileName, setBulkFileName] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
   const [formState, setFormState] = useState<TeacherFormState>(initialForm);
   const [picturePreviewUrl, setPicturePreviewUrl] = useState("");
@@ -180,6 +186,25 @@ export default function TeachersPage() {
       resetCreateForm();
       void queryClient.invalidateQueries({ queryKey: ["teachers"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error)),
+  });
+
+  const bulkCreateMutation = useMutation({
+    mutationFn: createTeachersBulk,
+    onSuccess: (result) => {
+      const failedCount = result.failed.length;
+      if (failedCount > 0) {
+        toast.error(`${result.created.length} teachers created, ${failedCount} failed`);
+      } else {
+        toast.success(`${result.created.length} teachers created successfully`);
+      }
+      setBulkCreateOpen(false);
+      setBulkText("");
+      setBulkFileName("");
+      void queryClient.invalidateQueries({ queryKey: ["teachers"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      void queryClient.invalidateQueries({ queryKey: ["schools"] });
     },
     onError: (error) => toast.error(getApiErrorMessage(error)),
   });
@@ -306,6 +331,80 @@ export default function TeachersPage() {
     createMutation.mutate(payload);
   };
 
+  const findCourseId = (value: string) => {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return "";
+
+    return (
+      courses.find(
+        (course) =>
+          course._id === value || course.name.trim().toLowerCase() === normalized,
+      )?._id || ""
+    );
+  };
+
+  const parseBulkTeachers = (): BulkTeacherPayload[] | null => {
+    const parsedRows = parseCsvRows(bulkText);
+    const rows =
+      parsedRows.length > 0 &&
+      hasCsvHeader(parsedRows[0], ["school", "teacher", "user"])
+        ? parsedRows.slice(1)
+        : parsedRows;
+
+    if (rows.length === 0) {
+      toast.error("Add at least one teacher row");
+      return null;
+    }
+
+    const teachers: BulkTeacherPayload[] = [];
+    for (const [index, row] of rows.entries()) {
+      const [schoolName, teacherName, userId, password, gradeLevel] = row;
+
+      if (!schoolName || !teacherName || !userId || !password || !gradeLevel) {
+        toast.error(`Row ${index + 1} is missing required values`);
+        return null;
+      }
+
+      const optionalValues = row.slice(5).filter(Boolean);
+      const statusValue = optionalValues.find((value) =>
+        ["active", "inactive"].includes(value.toLowerCase()),
+      );
+      const courseIds = optionalValues
+        .filter((value) => !["active", "inactive"].includes(value.toLowerCase()))
+        .map(findCourseId)
+        .filter(Boolean);
+
+      teachers.push({
+        schoolName,
+        teacherName,
+        userId,
+        password,
+        confirmPassword: password,
+        gradeLevel,
+        courseIds,
+        status: statusValue?.toLowerCase() === "inactive" ? "inactive" : "active",
+      });
+    }
+
+    return teachers;
+  };
+
+  const handleBulkCreateTeachers = () => {
+    const teachers = parseBulkTeachers();
+    if (!teachers) return;
+    bulkCreateMutation.mutate(teachers);
+  };
+
+  const handleBulkCsvUpload = async (file: File | null) => {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      toast.error("Upload a CSV file");
+      return;
+    }
+    setBulkText(await file.text());
+    setBulkFileName(file.name);
+  };
+
   const handleDelete = (teacherId: string) => {
     if (!window.confirm("Delete this teacher?")) return;
     deleteMutation.mutate(teacherId);
@@ -342,6 +441,7 @@ export default function TeachersPage() {
             onSearchChange={setSearchInput}
             onOpenFilter={() => setFilterOpen(true)}
             onOpenCreate={() => setCreateOpen(true)}
+            onOpenBulkCreate={() => setBulkCreateOpen(true)}
             className="mb-4"
             addLabel="Add New"
           />
@@ -682,6 +782,59 @@ export default function TeachersPage() {
             </Button>
             <Button onClick={handleCreate} disabled={createMutation.isPending}>
               {createMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Save"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkCreateOpen} onOpenChange={setBulkCreateOpen}>
+        <DialogContent className="max-w-[760px]">
+          <DialogHeader>
+            <DialogTitle className="text-[24px]">Bulk Add Teachers</DialogTitle>
+            <DialogDescription>
+              Upload a CSV file with School Name, Teacher Name, User ID, Password, Grade Level, Course, Status
+            </DialogDescription>
+          </DialogHeader>
+
+          <label className="flex h-12 cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-[#34b56a] bg-[#f8fff9] text-[16px] font-semibold text-[#079938]">
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(event) => {
+                void handleBulkCsvUpload(event.target.files?.[0] || null);
+                event.target.value = "";
+              }}
+            />
+            <Upload className="h-4 w-4" />
+            Upload CSV
+          </label>
+          {bulkFileName ? (
+            <div className="rounded-lg border border-[#d9ead3] bg-[#f8fff9] px-4 py-3 text-sm font-medium text-[#079938]">
+              {bulkFileName}
+            </div>
+          ) : null}
+
+          <DialogFooter className="grid grid-cols-2 gap-3 sm:grid-cols-2">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setBulkCreateOpen(false);
+                setBulkText("");
+                setBulkFileName("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleBulkCreateTeachers}
+              disabled={bulkCreateMutation.isPending}
+            >
+              {bulkCreateMutation.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 "Save"
