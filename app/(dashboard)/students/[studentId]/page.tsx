@@ -2,9 +2,9 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CartesianGrid,
   Legend,
@@ -19,12 +19,26 @@ import {
   Calculator,
   FlaskConical,
   HandHelping,
+  KeyRound,
   Landmark,
   Languages,
+  Loader2,
   type LucideIcon,
 } from "lucide-react";
-import { fetchStudentById, getApiErrorMessage } from "@/lib/api";
+import { toast } from "sonner";
+import { fetchStudentById, getApiErrorMessage, updateStudent } from "@/lib/api";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -161,11 +175,28 @@ const buildSubjectTiles = (
 export default function StudentDetailsPage() {
   const params = useParams<{ studentId: string }>();
   const studentId = params.studentId;
+  const queryClient = useQueryClient();
+  const [resetOpen, setResetOpen] = useState(false);
+  const [passwordState, setPasswordState] = useState({
+    password: "",
+    confirmPassword: "",
+  });
 
   const studentQuery = useQuery({
     queryKey: ["student", studentId],
     queryFn: () => fetchStudentById(studentId),
     enabled: !!studentId,
+  });
+
+  const resetPasswordMutation = useMutation({
+    mutationFn: (payload: FormData) => updateStudent(studentId, payload),
+    onSuccess: () => {
+      toast.success("Password reset successfully");
+      setResetOpen(false);
+      setPasswordState({ password: "", confirmPassword: "" });
+      void queryClient.invalidateQueries({ queryKey: ["student", studentId] });
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error)),
   });
 
   const subjectTiles = useMemo(
@@ -262,17 +293,46 @@ export default function StudentDetailsPage() {
   const totalHoursLabel = `${progressSheet.summary.totalHours.toFixed(1)}h`;
   const averageQuizLabel = `${Math.round(progressSheet.summary.avgQuizScore)}/100`;
 
+  const handleResetPassword = () => {
+    if (!passwordState.password || !passwordState.confirmPassword) {
+      toast.error("Password and confirm password are required");
+      return;
+    }
+
+    if (passwordState.password !== passwordState.confirmPassword) {
+      toast.error("Passwords do not match");
+      return;
+    }
+
+    const payload = new FormData();
+    payload.append("password", passwordState.password);
+    resetPasswordMutation.mutate(payload);
+  };
+
   return (
     <div className="space-y-4">
       <Card className="content-shell">
         <CardContent className="p-5">
-          <h1 className="text-[24px] font-semibold">Student Details</h1>
-          <p className="mt-1 text-[16px] text-[#838383]">
-            <Link href="/students" className="hover:underline">
-              Student Management
-            </Link>{" "}
-            &gt; Student Details
-          </p>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h1 className="text-[24px] font-semibold">Student Details</h1>
+              <p className="mt-1 text-[16px] text-[#838383]">
+                <Link href="/students" className="hover:underline">
+                  Student Management
+                </Link>{" "}
+                &gt; Student Details
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setResetOpen(true)}
+              className="gap-2"
+            >
+              <KeyRound className="h-4 w-4" />
+              Reset Password
+            </Button>
+          </div>
 
           <div className="mt-4 rounded-xl border border-[#e2e7db] p-5">
             <p className="text-[20px] font-semibold text-[#1f1f1f]">
@@ -343,6 +403,70 @@ export default function StudentDetailsPage() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog
+        open={resetOpen}
+        onOpenChange={(open) => {
+          setResetOpen(open);
+          if (!open) {
+            setPasswordState({ password: "", confirmPassword: "" });
+          }
+        }}
+      >
+        <DialogContent className="max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle className="text-[24px]">Reset Password</DialogTitle>
+            <DialogDescription>
+              Set a new password for {student.studentName}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4">
+            <div className="space-y-2">
+              <Label>New Password</Label>
+              <PasswordInput
+                value={passwordState.password}
+                onChange={(event) =>
+                  setPasswordState((prev) => ({
+                    ...prev,
+                    password: event.target.value,
+                  }))
+                }
+                placeholder="Enter new password"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Confirm Password</Label>
+              <PasswordInput
+                value={passwordState.confirmPassword}
+                onChange={(event) =>
+                  setPasswordState((prev) => ({
+                    ...prev,
+                    confirmPassword: event.target.value,
+                  }))
+                }
+                placeholder="Confirm new password"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="grid grid-cols-2 gap-3 sm:grid-cols-2">
+            <Button variant="secondary" onClick={() => setResetOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleResetPassword}
+              disabled={resetPasswordMutation.isPending}
+            >
+              {resetPasswordMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Save"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Card className="content-shell">
         <CardContent className="p-5">

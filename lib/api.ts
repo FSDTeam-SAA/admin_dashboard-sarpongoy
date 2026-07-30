@@ -121,6 +121,45 @@ export interface CourseItem {
   image?: { url?: string; public_id?: string };
 }
 
+export interface BulkCreateResult<T> {
+  created: T[];
+  failed: Array<{
+    index: number;
+    message: string;
+    item?: unknown;
+  }>;
+}
+
+export interface BulkStudentPayload {
+  schoolId?: string;
+  schoolName?: string;
+  studentName: string;
+  userId: string;
+  password: string;
+  confirmPassword: string;
+  gradeLevel: string;
+  status?: "active" | "inactive";
+}
+
+export interface BulkTeacherPayload {
+  schoolId?: string;
+  schoolName?: string;
+  teacherName: string;
+  userId: string;
+  password: string;
+  confirmPassword: string;
+  gradeLevel: string;
+  courseIds?: string[];
+  status?: "active" | "inactive";
+}
+
+export interface BulkSchoolPayload {
+  name: string;
+  schoolCode: string;
+  gradeLevels?: string[];
+  status?: "active" | "inactive";
+}
+
 export interface StudentDetailsData {
   student: {
     _id: string;
@@ -413,6 +452,13 @@ export const createStudent = async (payload: FormData) => {
   return unwrap(response);
 };
 
+export const createStudentsBulk = async (students: BulkStudentPayload[]) => {
+  const response = await apiClient.post<
+    ApiEnvelope<BulkCreateResult<StudentListItem>>
+  >("/admin/students/bulk", { students });
+  return unwrap(response);
+};
+
 export const updateStudent = async (studentId: string, payload: FormData) => {
   const response = await apiClient.patch<ApiEnvelope<StudentListItem>>(
     `/admin/students/${studentId}`,
@@ -470,6 +516,13 @@ export const createTeacher = async (payload: FormData) => {
   return unwrap(response);
 };
 
+export const createTeachersBulk = async (teachers: BulkTeacherPayload[]) => {
+  const response = await apiClient.post<
+    ApiEnvelope<BulkCreateResult<TeacherListItem>>
+  >("/admin/teachers/bulk", { teachers });
+  return unwrap(response);
+};
+
 export const updateTeacher = async (teacherId: string, payload: FormData) => {
   const response = await apiClient.patch<ApiEnvelope<TeacherListItem>>(
     `/admin/teachers/${teacherId}`,
@@ -515,6 +568,13 @@ export const createSchool = async (payload: {
     "/admin/schools",
     payload,
   );
+  return unwrap(response);
+};
+
+export const createSchoolsBulk = async (schools: BulkSchoolPayload[]) => {
+  const response = await apiClient.post<
+    ApiEnvelope<BulkCreateResult<SchoolItem>>
+  >("/admin/schools/bulk", { schools });
   return unwrap(response);
 };
 

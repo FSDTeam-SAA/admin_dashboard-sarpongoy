@@ -2,7 +2,7 @@ const rawServerBaseUrl =
   process.env.NEXT_PUBLIC_BASE_URL ||
   process.env.NEXT_PUBLIC_BASEURL ||
   process.env.NEXTPUBLICBASEURL ||
-  "";
+  (process.env.NODE_ENV === "production" ? "" : "http://localhost:5000");
 
 const cleanServerBase = rawServerBaseUrl.replace(/\/+$/, "");
 

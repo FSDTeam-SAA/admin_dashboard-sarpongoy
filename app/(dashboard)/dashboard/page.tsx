@@ -52,6 +52,15 @@ export default function DashboardPage() {
   if (isLoading) return <DashboardSkeleton />;
   if (isError || !data) return <div className="p-6 text-red-500">Error loading data.</div>;
 
+  const totalActivityHours = data.charts.activityHour.reduce(
+    (total, item) => total + item.hours,
+    0,
+  );
+  const totalQuizCompleted = data.charts.subjectDistribution.reduce(
+    (total, item) => total + item.completed,
+    0,
+  );
+
   const subjectChartData = data.charts.subjectDistribution.map((item) => ({
     name: item.subject,
     value: item.completed,
@@ -61,11 +70,11 @@ export default function DashboardPage() {
     <div className="space-y-6 ">
       {/* 1. Stat Cards Grid */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <StatCard label="Total Students" value="12.5k" trend="+ 36%" />
-        <StatCard label="Total Teachers" value="12.5k" trend="+ 36%" />
-        <StatCard label="Total Subjects" value="5" trend="+ 57%" />
-        <StatCard label="Activity Hour" value="20 hr" trend="+ 83%" />
-        <StatCard label="Quiz Completed" value="125" trend="+ 69%" />
+        <StatCard label="Total Students" value={`${data.counters.totalStudents}`} trend="+ 36%" />
+        <StatCard label="Total Teachers" value={`${data.counters.totalTeachers}`} trend="+ 36%" />
+        <StatCard label="Total Subjects" value={`${data.counters.totalSubjects}`} trend="+ 57%" />
+        <StatCard label="Activity Hour" value={`${totalActivityHours.toFixed(1)} hr`} trend="+ 83%" />
+        <StatCard label="Quiz Completed" value={`${totalQuizCompleted}`} trend="+ 69%" />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-3">

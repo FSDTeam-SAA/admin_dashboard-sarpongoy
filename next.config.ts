@@ -4,7 +4,7 @@ const rawBackendBase =
   process.env.NEXT_PUBLIC_BASE_URL ||
   process.env.NEXT_PUBLIC_BASEURL ||
   process.env.NEXTPUBLICBASEURL ||
-  "";
+  (process.env.NODE_ENV === "production" ? "" : "http://localhost:5000");
 
 const trimmedBackendBase = rawBackendBase.replace(/\/+$/, "");
 const backendOrigin = trimmedBackendBase.endsWith("/api/v1")
