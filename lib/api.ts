@@ -233,6 +233,8 @@ interface RetryConfig extends InternalAxiosRequestConfig {
 }
 
 type FilterValue = string | number | boolean | null | undefined;
+const BULK_CHUNK_SIZE = 25;
+const BULK_REQUEST_TIMEOUT_MS = 120000;
 
 let authBridge: AuthBridge = {
   getAccessToken: () => undefined,
@@ -261,6 +263,42 @@ const compactParams = (params?: Record<string, FilterValue>) =>
       ([, value]) => value !== undefined && value !== null && value !== "",
     ),
   );
+
+const chunkItems = <T>(items: T[], size: number) => {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+};
+
+const createBulkRecords = async <TPayload, TResult>(
+  path: string,
+  key: string,
+  items: TPayload[],
+): Promise<BulkCreateResult<TResult>> => {
+  const created: TResult[] = [];
+  const failed: BulkCreateResult<TResult>["failed"] = [];
+
+  for (const chunk of chunkItems(items, BULK_CHUNK_SIZE)) {
+    const offset = created.length + failed.length;
+    const response = await apiClient.post<ApiEnvelope<BulkCreateResult<TResult>>>(
+      path,
+      { [key]: chunk },
+      { timeout: BULK_REQUEST_TIMEOUT_MS },
+    );
+    const result = unwrap(response);
+    created.push(...result.created);
+    failed.push(
+      ...result.failed.map((item) => ({
+        ...item,
+        index: item.index + offset,
+      })),
+    );
+  }
+
+  return { created, failed };
+};
 
 const requestAccessTokenRefresh = async (): Promise<string | null> => {
   const refreshToken = authBridge.getRefreshToken();
@@ -453,10 +491,11 @@ export const createStudent = async (payload: FormData) => {
 };
 
 export const createStudentsBulk = async (students: BulkStudentPayload[]) => {
-  const response = await apiClient.post<
-    ApiEnvelope<BulkCreateResult<StudentListItem>>
-  >("/admin/students/bulk", { students });
-  return unwrap(response);
+  return createBulkRecords<BulkStudentPayload, StudentListItem>(
+    "/admin/students/bulk",
+    "students",
+    students,
+  );
 };
 
 export const updateStudent = async (studentId: string, payload: FormData) => {
@@ -517,10 +556,11 @@ export const createTeacher = async (payload: FormData) => {
 };
 
 export const createTeachersBulk = async (teachers: BulkTeacherPayload[]) => {
-  const response = await apiClient.post<
-    ApiEnvelope<BulkCreateResult<TeacherListItem>>
-  >("/admin/teachers/bulk", { teachers });
-  return unwrap(response);
+  return createBulkRecords<BulkTeacherPayload, TeacherListItem>(
+    "/admin/teachers/bulk",
+    "teachers",
+    teachers,
+  );
 };
 
 export const updateTeacher = async (teacherId: string, payload: FormData) => {
@@ -572,10 +612,11 @@ export const createSchool = async (payload: {
 };
 
 export const createSchoolsBulk = async (schools: BulkSchoolPayload[]) => {
-  const response = await apiClient.post<
-    ApiEnvelope<BulkCreateResult<SchoolItem>>
-  >("/admin/schools/bulk", { schools });
-  return unwrap(response);
+  return createBulkRecords<BulkSchoolPayload, SchoolItem>(
+    "/admin/schools/bulk",
+    "schools",
+    schools,
+  );
 };
 
 export const updateSchool = async (
