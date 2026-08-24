@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, Loader2, Trash2, Upload } from "lucide-react";
+import { Eye, Loader2, Pencil, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
   createStudentsBulk,
@@ -14,8 +14,9 @@ import {
   fetchSchools,
   fetchStudents,
   getApiErrorMessage,
+  updateStudent,
 } from "@/lib/api";
-import type { BulkStudentPayload } from "@/lib/api";
+import type { BulkStudentPayload, StudentListItem } from "@/lib/api";
 import { GRADE_LEVELS } from "@/lib/constants";
 import { hasCsvHeader, parseCsvRows } from "@/lib/csv";
 import { StatCard } from "@/components/dashboard/stat-card";
@@ -82,6 +83,16 @@ interface StudentFormState {
   file: File | null;
 }
 
+interface StudentEditFormState {
+  schoolId: string;
+  studentName: string;
+  userId: string;
+  password: string;
+  confirmPassword: string;
+  gradeLevel: string;
+  status: "active" | "inactive";
+}
+
 const initialForm: StudentFormState = {
   schoolId: "",
   studentName: "",
@@ -92,6 +103,16 @@ const initialForm: StudentFormState = {
   status: "active",
   picture: null,
   file: null,
+};
+
+const initialEditForm: StudentEditFormState = {
+  schoolId: "",
+  studentName: "",
+  userId: "",
+  password: "",
+  confirmPassword: "",
+  gradeLevel: "JHS 1",
+  status: "active",
 };
 
 export default function StudentsPage() {
@@ -106,6 +127,9 @@ export default function StudentsPage() {
   const [bulkFileName, setBulkFileName] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
   const [formState, setFormState] = useState<StudentFormState>(initialForm);
+  const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+  const [editFormState, setEditFormState] =
+    useState<StudentEditFormState>(initialEditForm);
   const [picturePreviewUrl, setPicturePreviewUrl] = useState("");
   const [filePreviewUrl, setFilePreviewUrl] = useState("");
   const picturePreviewObjectUrlRef = useRef<string | null>(null);
@@ -184,6 +208,21 @@ export default function StudentsPage() {
     onError: (error) => {
       toast.error(getApiErrorMessage(error));
     },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ studentId, payload }: { studentId: string; payload: FormData }) =>
+      updateStudent(studentId, payload),
+    onSuccess: () => {
+      toast.success("Student updated successfully");
+      setEditingStudentId(null);
+      setEditFormState(initialEditForm);
+      void queryClient.invalidateQueries({ queryKey: ["students"] });
+      void queryClient.invalidateQueries({ queryKey: ["student"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      void queryClient.invalidateQueries({ queryKey: ["schools"] });
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error)),
   });
 
   const bulkCreateMutation = useMutation({
@@ -326,6 +365,54 @@ export default function StudentsPage() {
     createMutation.mutate(payload);
   };
 
+  const handleOpenEdit = (student: StudentListItem) => {
+    setEditFormState({
+      schoolId: student.schoolId,
+      studentName: student.studentName,
+      userId: student.userId,
+      password: "",
+      confirmPassword: "",
+      gradeLevel: student.gradeLevel,
+      status: student.status,
+    });
+    setEditingStudentId(student._id);
+  };
+
+  const handleEditDialogChange = (open: boolean) => {
+    if (open) return;
+    setEditingStudentId(null);
+    setEditFormState(initialEditForm);
+  };
+
+  const handleUpdateStudent = () => {
+    if (!editingStudentId) return;
+    if (
+      !editFormState.schoolId ||
+      !editFormState.studentName.trim() ||
+      !editFormState.userId.trim() ||
+      !editFormState.gradeLevel
+    ) {
+      toast.error("School, student name, user ID, and grade level are required");
+      return;
+    }
+    if (editFormState.password !== editFormState.confirmPassword) {
+      toast.error("Passwords do not match");
+      return;
+    }
+
+    const payload = new FormData();
+    payload.append("schoolId", editFormState.schoolId);
+    payload.append("studentName", editFormState.studentName.trim());
+    payload.append("userId", editFormState.userId.trim());
+    payload.append("gradeLevel", editFormState.gradeLevel);
+    payload.append("status", editFormState.status);
+    if (editFormState.password) {
+      payload.append("password", editFormState.password);
+    }
+
+    updateMutation.mutate({ studentId: editingStudentId, payload });
+  };
+
   const parseBulkStudents = (): BulkStudentPayload[] | null => {
     const parsedRows = parseCsvRows(bulkText);
     const rows =
@@ -464,6 +551,15 @@ export default function StudentsPage() {
                         <div className="flex items-center gap-3">
                           <button
                             type="button"
+                            className="text-[#159447] transition-colors hover:text-[#0f6d35]"
+                            onClick={() => handleOpenEdit(item)}
+                            aria-label={`Edit ${item.studentName}`}
+                            title="Edit student"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
                             className="text-[#ff3030]"
                             onClick={() => handleDelete(item._id)}
                             disabled={deleteMutation.isPending}
@@ -519,7 +615,7 @@ export default function StudentsPage() {
                   <SelectTrigger>
                     <SelectValue placeholder="Select School" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent viewportClassName="h-auto max-h-60 overflow-y-auto">
                     {schools.map((school) => (
                       <SelectItem key={school._id} value={school._id}>
                         {school.name}
@@ -739,6 +835,177 @@ export default function StudentsPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={editingStudentId !== null}
+        onOpenChange={handleEditDialogChange}
+      >
+        <DialogContent className="max-w-[640px]">
+          <DialogHeader>
+            <DialogTitle className="text-[24px]">Edit Student</DialogTitle>
+            <DialogDescription>
+              Update the student&apos;s account and school information.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2 sm:col-span-2">
+              <Label className="text-[18px]">School Name</Label>
+              <Select
+                value={editFormState.schoolId}
+                onValueChange={(value) =>
+                  setEditFormState((prev) => ({ ...prev, schoolId: value }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select School" />
+                </SelectTrigger>
+                <SelectContent viewportClassName="h-auto max-h-60 overflow-y-auto">
+                  {schools.map((school) => (
+                    <SelectItem key={school._id} value={school._id}>
+                      {school.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-student-name" className="text-[18px]">
+                Student&apos;s Name
+              </Label>
+              <Input
+                id="edit-student-name"
+                value={editFormState.studentName}
+                onChange={(event) =>
+                  setEditFormState((prev) => ({
+                    ...prev,
+                    studentName: event.target.value,
+                  }))
+                }
+                placeholder="Student name"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-student-user-id" className="text-[18px]">
+                User ID
+              </Label>
+              <Input
+                id="edit-student-user-id"
+                value={editFormState.userId}
+                onChange={(event) =>
+                  setEditFormState((prev) => ({
+                    ...prev,
+                    userId: event.target.value,
+                  }))
+                }
+                placeholder="User ID"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-[18px]">Grade Level</Label>
+              <Select
+                value={editFormState.gradeLevel}
+                onValueChange={(value) =>
+                  setEditFormState((prev) => ({ ...prev, gradeLevel: value }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {GRADE_LEVELS.map((grade) => (
+                    <SelectItem key={grade} value={grade}>
+                      {grade}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-[18px]">Status</Label>
+              <Select
+                value={editFormState.status}
+                onValueChange={(value) =>
+                  setEditFormState((prev) => ({
+                    ...prev,
+                    status: value as StudentEditFormState["status"],
+                  }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-student-password" className="text-[18px]">
+                New Password
+              </Label>
+              <PasswordInput
+                id="edit-student-password"
+                value={editFormState.password}
+                onChange={(event) =>
+                  setEditFormState((prev) => ({
+                    ...prev,
+                    password: event.target.value,
+                  }))
+                }
+                placeholder="Leave blank to keep current"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label
+                htmlFor="edit-student-confirm-password"
+                className="text-[18px]"
+              >
+                Confirm Password
+              </Label>
+              <PasswordInput
+                id="edit-student-confirm-password"
+                value={editFormState.confirmPassword}
+                onChange={(event) =>
+                  setEditFormState((prev) => ({
+                    ...prev,
+                    confirmPassword: event.target.value,
+                  }))
+                }
+                placeholder="Confirm new password"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="grid grid-cols-2 gap-3 sm:grid-cols-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => handleEditDialogChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleUpdateStudent}
+              disabled={updateMutation.isPending}
+            >
+              {updateMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Save Changes"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={bulkCreateOpen} onOpenChange={setBulkCreateOpen}>
         <DialogContent className="max-w-[760px]">
           <DialogHeader>
@@ -853,7 +1120,7 @@ export default function StudentsPage() {
                   <SelectTrigger>
                     <SelectValue placeholder="Select school" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent viewportClassName="h-auto max-h-60 overflow-y-auto">
                     <SelectItem value="__all__">All Schools</SelectItem>
                     {schools.map((school) => (
                       <SelectItem key={school._id} value={school._id}>
