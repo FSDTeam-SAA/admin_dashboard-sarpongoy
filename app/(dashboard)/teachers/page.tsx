@@ -14,12 +14,19 @@ import {
   fetchDashboard,
   fetchSchools,
   fetchTeachers,
+  fetchTeachersExport,
   getApiErrorMessage,
+  updateTeachersGradeLevel,
 } from "@/lib/api";
-import type { BulkTeacherPayload } from "@/lib/api";
+import type { BulkTeacherPayload, TeacherExportRow } from "@/lib/api";
 import { GRADE_LEVELS } from "@/lib/constants";
 import { hasCsvHeader, parseCsvRows } from "@/lib/csv";
 import { StatCard } from "@/components/dashboard/stat-card";
+import { BulkGradeAction } from "@/components/management/bulk-grade-action";
+import {
+  ExportRecordsDialog,
+  type ExportColumn,
+} from "@/components/management/export-records-dialog";
 import { ManagementToolbar } from "@/components/management/management-toolbar";
 import { SectionHeader } from "@/components/management/section-header";
 import { TableSkeleton } from "@/components/management/table-skeleton";
@@ -38,6 +45,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Pagination } from "@/components/ui/pagination";
 import { PasswordInput } from "@/components/ui/password-input";
+import { SelectionCheckbox } from "@/components/ui/selection-checkbox";
 import {
   Select,
   SelectContent,
@@ -63,6 +71,13 @@ const IMAGE_MIME_TYPES = new Set([
   "image/webp",
 ]);
 const FILE_MIME_TYPES = new Set([...IMAGE_MIME_TYPES, "application/pdf"]);
+const TEACHER_EXPORT_COLUMNS = [
+  { key: "serialNumber", label: "Serial Number" },
+  { key: "schoolName", label: "School Name" },
+  { key: "teacherName", label: "Teacher Name" },
+  { key: "userId", label: "User ID" },
+  { key: "gradeLevel", label: "Grade Level" },
+] satisfies readonly ExportColumn<TeacherExportRow>[];
 
 const formatUploadSize = (bytes: number) => {
   if (bytes >= 1024 * 1024) {
@@ -107,6 +122,7 @@ export default function TeachersPage() {
   const [bulkText, setBulkText] = useState("");
   const [bulkFileName, setBulkFileName] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [formState, setFormState] = useState<TeacherFormState>(initialForm);
   const [picturePreviewUrl, setPicturePreviewUrl] = useState("");
   const [filePreviewUrl, setFilePreviewUrl] = useState("");
@@ -120,11 +136,16 @@ export default function TeachersPage() {
     subject: "",
     status: "",
   });
+  const [selectedTeacherIds, setSelectedTeacherIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [bulkGradeLevel, setBulkGradeLevel] = useState("");
 
   useEffect(() => {
     const timeout = setTimeout(() => {
       setSearch(searchInput);
       setPage(1);
+      setSelectedTeacherIds(new Set());
     }, 350);
     return () => clearTimeout(timeout);
   }, [searchInput]);
@@ -178,6 +199,26 @@ export default function TeachersPage() {
       }),
   });
 
+  const teachersExportQuery = useQuery({
+    queryKey: [
+      "teachers-export",
+      search,
+      filters.userId,
+      filters.teacherName,
+      filters.schoolId,
+      filters.gradeLevel,
+      filters.status,
+    ],
+    queryFn: () =>
+      fetchTeachersExport({
+        search: search || filters.userId || filters.teacherName || undefined,
+        schoolId: filters.schoolId || undefined,
+        gradeLevel: filters.gradeLevel || undefined,
+        status: filters.status || undefined,
+      }),
+    enabled: exportOpen,
+  });
+
   const createMutation = useMutation({
     mutationFn: createTeacher,
     onSuccess: () => {
@@ -219,9 +260,52 @@ export default function TeachersPage() {
     onError: (error) => toast.error(getApiErrorMessage(error)),
   });
 
+  const bulkGradeMutation = useMutation({
+    mutationFn: ({ teacherIds, gradeLevel }: { teacherIds: string[]; gradeLevel: string }) =>
+      updateTeachersGradeLevel(teacherIds, gradeLevel),
+    onSuccess: (result) => {
+      toast.success(
+        `${result.updatedCount} teacher${result.updatedCount === 1 ? "" : "s"} updated to ${result.gradeLevel}`,
+      );
+      setSelectedTeacherIds(new Set());
+      setBulkGradeLevel("");
+      void queryClient.invalidateQueries({ queryKey: ["teachers"] });
+      void queryClient.invalidateQueries({ queryKey: ["teacher"] });
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error)),
+  });
+
   const counters = dashboardQuery.data?.counters;
   const schools = schoolsQuery.data?.items || [];
   const courses = coursesQuery.data || [];
+  const visibleTeacherIds = teachersQuery.data?.items.map((item) => item._id) || [];
+  const allVisibleTeachersSelected =
+    visibleTeacherIds.length > 0 &&
+    visibleTeacherIds.every((teacherId) => selectedTeacherIds.has(teacherId));
+  const someVisibleTeachersSelected = visibleTeacherIds.some((teacherId) =>
+    selectedTeacherIds.has(teacherId),
+  );
+
+  const handleToggleTeacher = (teacherId: string, checked: boolean) => {
+    setSelectedTeacherIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(teacherId);
+      else next.delete(teacherId);
+      return next;
+    });
+  };
+
+  const handleToggleAllTeachers = (checked: boolean) => {
+    setSelectedTeacherIds(checked ? new Set(visibleTeacherIds) : new Set());
+  };
+
+  const handleBulkGradeUpdate = () => {
+    if (!bulkGradeLevel || selectedTeacherIds.size === 0) return;
+    bulkGradeMutation.mutate({
+      teacherIds: [...selectedTeacherIds],
+      gradeLevel: bulkGradeLevel,
+    });
+  };
 
   const selectedSchoolName = schools.find(
     (item) => item._id === formState.schoolId,
@@ -442,12 +526,26 @@ export default function TeachersPage() {
             onOpenFilter={() => setFilterOpen(true)}
             onOpenCreate={() => setCreateOpen(true)}
             onOpenBulkCreate={() => setBulkCreateOpen(true)}
+            onOpenExport={() => setExportOpen(true)}
             className="mb-4"
             addLabel="Add New"
           />
 
+          <BulkGradeAction
+            selectedCount={selectedTeacherIds.size}
+            itemLabel="teacher"
+            gradeLevel={bulkGradeLevel}
+            onGradeLevelChange={setBulkGradeLevel}
+            onApply={handleBulkGradeUpdate}
+            onClear={() => {
+              setSelectedTeacherIds(new Set());
+              setBulkGradeLevel("");
+            }}
+            isPending={bulkGradeMutation.isPending}
+          />
+
           {teachersQuery.isLoading ? (
-            <TableSkeleton />
+            <TableSkeleton columns={8} />
           ) : teachersQuery.isError ? (
             <div className="rounded-lg border border-[#ffd3d3] bg-[#fff6f6] p-4 text-[#d73636]">
               {getApiErrorMessage(
@@ -460,6 +558,21 @@ export default function TeachersPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12 px-4">
+                      <SelectionCheckbox
+                        checked={allVisibleTeachersSelected}
+                        indeterminate={
+                          someVisibleTeachersSelected && !allVisibleTeachersSelected
+                        }
+                        onChange={(event) =>
+                          handleToggleAllTeachers(event.target.checked)
+                        }
+                        disabled={
+                          visibleTeacherIds.length === 0 || bulkGradeMutation.isPending
+                        }
+                        aria-label="Select all teachers on this page"
+                      />
+                    </TableHead>
                     <TableHead>School Name</TableHead>
                     <TableHead>Teacher Name</TableHead>
                     <TableHead>User ID</TableHead>
@@ -471,7 +584,22 @@ export default function TeachersPage() {
                 </TableHeader>
                 <TableBody>
                   {teachersQuery.data?.items.map((item) => (
-                    <TableRow key={item._id}>
+                    <TableRow
+                      key={item._id}
+                      className={
+                        selectedTeacherIds.has(item._id) ? "bg-[#f2fbf3]" : undefined
+                      }
+                    >
+                      <TableCell className="w-12 px-4">
+                        <SelectionCheckbox
+                          checked={selectedTeacherIds.has(item._id)}
+                          onChange={(event) =>
+                            handleToggleTeacher(item._id, event.target.checked)
+                          }
+                          disabled={bulkGradeMutation.isPending}
+                          aria-label={`Select ${item.teacherName}`}
+                        />
+                      </TableCell>
                       <TableCell>{item.schoolName}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
@@ -520,7 +648,10 @@ export default function TeachersPage() {
                 <Pagination
                   page={teachersQuery.data?.meta.page || 1}
                   totalPages={teachersQuery.data?.meta.totalPages || 1}
-                  onChange={setPage}
+                  onChange={(nextPage) => {
+                    setSelectedTeacherIds(new Set());
+                    setPage(nextPage);
+                  }}
                 />
               </div>
             </div>
@@ -843,6 +974,25 @@ export default function TeachersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ExportRecordsDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        title="Export Teachers"
+        description="Preview all teachers matching the current search and filters."
+        fileName="teachers-export.csv"
+        columns={TEACHER_EXPORT_COLUMNS}
+        rows={teachersExportQuery.data || []}
+        isLoading={teachersExportQuery.isLoading || teachersExportQuery.isFetching}
+        errorMessage={
+          teachersExportQuery.isError
+            ? getApiErrorMessage(
+                teachersExportQuery.error,
+                "Failed to load teacher export data",
+              )
+            : undefined
+        }
+      />
 
       <Dialog open={filterOpen} onOpenChange={setFilterOpen}>
         <DialogContent className="max-w-[740px]">

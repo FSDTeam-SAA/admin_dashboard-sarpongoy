@@ -22,11 +22,6 @@ export const GRADE_LEVELS = [
   "JHS 1",
   "JHS 2",
   "JHS 3",
-  "SS 1",
-  "SS 2",
-  "SS 3",
-  "SS 4",
-  "SS 5",
 ] as const;
 
 export const STUDENT_STATUS = ["active", "inactive"] as const;

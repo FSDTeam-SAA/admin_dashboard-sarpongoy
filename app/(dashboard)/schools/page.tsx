@@ -2,19 +2,26 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, Search, Trash2, Upload } from "lucide-react";
+import { Download, Loader2, Plus, Search, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
   createSchoolsBulk,
   createSchool,
   deleteSchool,
   fetchSchools,
+  fetchSchoolsExport,
   getApiErrorMessage,
   updateSchool,
+  updateSchoolsGradeLevel,
 } from "@/lib/api";
-import type { BulkSchoolPayload } from "@/lib/api";
+import type { BulkSchoolPayload, SchoolExportRow } from "@/lib/api";
 import { GRADE_LEVELS } from "@/lib/constants";
 import { hasCsvHeader, parseCsvRows } from "@/lib/csv";
+import { BulkGradeAction } from "@/components/management/bulk-grade-action";
+import {
+  ExportRecordsDialog,
+  type ExportColumn,
+} from "@/components/management/export-records-dialog";
 import { SectionHeader } from "@/components/management/section-header";
 import { TableSkeleton } from "@/components/management/table-skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +38,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Pagination } from "@/components/ui/pagination";
+import { SelectionCheckbox } from "@/components/ui/selection-checkbox";
 import {
   Select,
   SelectContent,
@@ -48,6 +56,12 @@ import {
 } from "@/components/ui/table";
 
 const PAGE_SIZE = 10;
+const SCHOOL_EXPORT_COLUMNS = [
+  { key: "serialNumber", label: "Serial Number" },
+  { key: "schoolName", label: "School Name" },
+  { key: "schoolCode", label: "School Code" },
+  { key: "gradeLevel", label: "Grade Level" },
+] satisfies readonly ExportColumn<SchoolExportRow>[];
 
 export default function SchoolManagementPage() {
   const queryClient = useQueryClient();
@@ -56,8 +70,13 @@ export default function SchoolManagementPage() {
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [bulkCreateOpen, setBulkCreateOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [bulkFileName, setBulkFileName] = useState("");
+  const [selectedSchoolIds, setSelectedSchoolIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [bulkGradeLevel, setBulkGradeLevel] = useState("");
   const [formState, setFormState] = useState({
     name: "",
     schoolCode: "",
@@ -70,6 +89,7 @@ export default function SchoolManagementPage() {
     const timeout = setTimeout(() => {
       setSearch(searchInput);
       setPage(1);
+      setSelectedSchoolIds(new Set());
     }, 350);
     return () => clearTimeout(timeout);
   }, [searchInput]);
@@ -82,6 +102,12 @@ export default function SchoolManagementPage() {
         limit: PAGE_SIZE,
         search: search || undefined,
       }),
+  });
+
+  const schoolsExportQuery = useQuery({
+    queryKey: ["schools-export", search],
+    queryFn: () => fetchSchoolsExport({ search: search || undefined }),
+    enabled: exportOpen,
   });
 
   const createMutation = useMutation({
@@ -146,6 +172,49 @@ export default function SchoolManagementPage() {
     },
     onError: (error) => toast.error(getApiErrorMessage(error)),
   });
+
+  const bulkGradeMutation = useMutation({
+    mutationFn: ({ schoolIds, gradeLevel }: { schoolIds: string[]; gradeLevel: string }) =>
+      updateSchoolsGradeLevel(schoolIds, gradeLevel),
+    onSuccess: (result) => {
+      toast.success(
+        `${result.updatedCount} school${result.updatedCount === 1 ? "" : "s"} updated to ${result.gradeLevel}`,
+      );
+      setSelectedSchoolIds(new Set());
+      setBulkGradeLevel("");
+      void queryClient.invalidateQueries({ queryKey: ["schools"] });
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error)),
+  });
+
+  const visibleSchoolIds = schoolsQuery.data?.items.map((item) => item._id) || [];
+  const allVisibleSchoolsSelected =
+    visibleSchoolIds.length > 0 &&
+    visibleSchoolIds.every((schoolId) => selectedSchoolIds.has(schoolId));
+  const someVisibleSchoolsSelected = visibleSchoolIds.some((schoolId) =>
+    selectedSchoolIds.has(schoolId),
+  );
+
+  const handleToggleSchool = (schoolId: string, checked: boolean) => {
+    setSelectedSchoolIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(schoolId);
+      else next.delete(schoolId);
+      return next;
+    });
+  };
+
+  const handleToggleAllSchools = (checked: boolean) => {
+    setSelectedSchoolIds(checked ? new Set(visibleSchoolIds) : new Set());
+  };
+
+  const handleBulkGradeUpdate = () => {
+    if (!bulkGradeLevel || selectedSchoolIds.size === 0) return;
+    bulkGradeMutation.mutate({
+      schoolIds: [...selectedSchoolIds],
+      gradeLevel: bulkGradeLevel,
+    });
+  };
 
   const handleCreate = () => {
     if (!formState.name || !formState.schoolCode) {
@@ -256,10 +325,33 @@ export default function SchoolManagementPage() {
               <Plus className="h-4 w-4" />
               Bulk Add
             </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setExportOpen(true)}
+              aria-label="Export schools"
+              title="Export schools"
+              className="h-12 w-full px-0 md:w-12"
+            >
+              <Download className="h-5 w-5" />
+            </Button>
           </div>
 
+          <BulkGradeAction
+            selectedCount={selectedSchoolIds.size}
+            itemLabel="school"
+            gradeLevel={bulkGradeLevel}
+            onGradeLevelChange={setBulkGradeLevel}
+            onApply={handleBulkGradeUpdate}
+            onClear={() => {
+              setSelectedSchoolIds(new Set());
+              setBulkGradeLevel("");
+            }}
+            isPending={bulkGradeMutation.isPending}
+          />
+
           {schoolsQuery.isLoading ? (
-            <TableSkeleton columns={7} />
+            <TableSkeleton columns={8} />
           ) : schoolsQuery.isError ? (
             <div className="rounded-lg border border-[#ffd3d3] bg-[#fff6f6] p-4 text-[#d73636]">
               {getApiErrorMessage(schoolsQuery.error, "Failed to load schools")}
@@ -269,6 +361,21 @@ export default function SchoolManagementPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12 px-4">
+                      <SelectionCheckbox
+                        checked={allVisibleSchoolsSelected}
+                        indeterminate={
+                          someVisibleSchoolsSelected && !allVisibleSchoolsSelected
+                        }
+                        onChange={(event) =>
+                          handleToggleAllSchools(event.target.checked)
+                        }
+                        disabled={
+                          visibleSchoolIds.length === 0 || bulkGradeMutation.isPending
+                        }
+                        aria-label="Select all schools on this page"
+                      />
+                    </TableHead>
                     <TableHead>School Name</TableHead>
                     <TableHead>School Code</TableHead>
                     <TableHead>Total Student</TableHead>
@@ -280,7 +387,22 @@ export default function SchoolManagementPage() {
                 </TableHeader>
                 <TableBody>
                   {schoolsQuery.data?.items.map((item) => (
-                    <TableRow key={item._id}>
+                    <TableRow
+                      key={item._id}
+                      className={
+                        selectedSchoolIds.has(item._id) ? "bg-[#f2fbf3]" : undefined
+                      }
+                    >
+                      <TableCell className="w-12 px-4">
+                        <SelectionCheckbox
+                          checked={selectedSchoolIds.has(item._id)}
+                          onChange={(event) =>
+                            handleToggleSchool(item._id, event.target.checked)
+                          }
+                          disabled={bulkGradeMutation.isPending}
+                          aria-label={`Select ${item.name}`}
+                        />
+                      </TableCell>
                       <TableCell>{item.name}</TableCell>
                       <TableCell>{item.schoolCode}</TableCell>
                       <TableCell>{item.totalStudent}</TableCell>
@@ -351,7 +473,10 @@ export default function SchoolManagementPage() {
                 <Pagination
                   page={schoolsQuery.data?.meta.page || 1}
                   totalPages={schoolsQuery.data?.meta.totalPages || 1}
-                  onChange={setPage}
+                  onChange={(nextPage) => {
+                    setSelectedSchoolIds(new Set());
+                    setPage(nextPage);
+                  }}
                 />
               </div>
             </div>
@@ -477,6 +602,25 @@ export default function SchoolManagementPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ExportRecordsDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        title="Export Schools"
+        description="Preview all schools matching the current search."
+        fileName="schools-export.csv"
+        columns={SCHOOL_EXPORT_COLUMNS}
+        rows={schoolsExportQuery.data || []}
+        isLoading={schoolsExportQuery.isLoading || schoolsExportQuery.isFetching}
+        errorMessage={
+          schoolsExportQuery.isError
+            ? getApiErrorMessage(
+                schoolsExportQuery.error,
+                "Failed to load school export data",
+              )
+            : undefined
+        }
+      />
 
       <Dialog open={bulkCreateOpen} onOpenChange={setBulkCreateOpen}>
         <DialogContent className="max-w-[760px]">

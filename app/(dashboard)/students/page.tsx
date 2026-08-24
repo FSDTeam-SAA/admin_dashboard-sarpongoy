@@ -13,13 +13,24 @@ import {
   fetchDashboard,
   fetchSchools,
   fetchStudents,
+  fetchStudentsExport,
   getApiErrorMessage,
   updateStudent,
+  updateStudentsGradeLevel,
 } from "@/lib/api";
-import type { BulkStudentPayload, StudentListItem } from "@/lib/api";
+import type {
+  BulkStudentPayload,
+  StudentExportRow,
+  StudentListItem,
+} from "@/lib/api";
 import { GRADE_LEVELS } from "@/lib/constants";
 import { hasCsvHeader, parseCsvRows } from "@/lib/csv";
 import { StatCard } from "@/components/dashboard/stat-card";
+import { BulkGradeAction } from "@/components/management/bulk-grade-action";
+import {
+  ExportRecordsDialog,
+  type ExportColumn,
+} from "@/components/management/export-records-dialog";
 import { ManagementToolbar } from "@/components/management/management-toolbar";
 import { SectionHeader } from "@/components/management/section-header";
 import { TableSkeleton } from "@/components/management/table-skeleton";
@@ -38,6 +49,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Pagination } from "@/components/ui/pagination";
 import { PasswordInput } from "@/components/ui/password-input";
+import { SelectionCheckbox } from "@/components/ui/selection-checkbox";
 import {
   Select,
   SelectContent,
@@ -63,6 +75,13 @@ const IMAGE_MIME_TYPES = new Set([
   "image/webp",
 ]);
 const FILE_MIME_TYPES = new Set([...IMAGE_MIME_TYPES, "application/pdf"]);
+const STUDENT_EXPORT_COLUMNS = [
+  { key: "serialNumber", label: "Serial Number" },
+  { key: "schoolName", label: "School Name" },
+  { key: "studentName", label: "Student Name" },
+  { key: "userId", label: "User ID" },
+  { key: "gradeLevel", label: "Grade Level" },
+] satisfies readonly ExportColumn<StudentExportRow>[];
 
 const formatUploadSize = (bytes: number) => {
   if (bytes >= 1024 * 1024) {
@@ -92,6 +111,22 @@ interface StudentEditFormState {
   gradeLevel: string;
   status: "active" | "inactive";
 }
+
+interface StudentFilters {
+  userId: string;
+  studentName: string;
+  schoolId: string;
+  gradeLevel: string;
+  status: string;
+}
+
+const emptyStudentFilters: StudentFilters = {
+  userId: "",
+  studentName: "",
+  schoolId: "",
+  gradeLevel: "",
+  status: "",
+};
 
 const initialForm: StudentFormState = {
   schoolId: "",
@@ -126,6 +161,7 @@ export default function StudentsPage() {
   const [bulkText, setBulkText] = useState("");
   const [bulkFileName, setBulkFileName] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [formState, setFormState] = useState<StudentFormState>(initialForm);
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [editFormState, setEditFormState] =
@@ -134,19 +170,19 @@ export default function StudentsPage() {
   const [filePreviewUrl, setFilePreviewUrl] = useState("");
   const picturePreviewObjectUrlRef = useRef<string | null>(null);
   const filePreviewObjectUrlRef = useRef<string | null>(null);
-  const [filters, setFilters] = useState({
-    userId: "",
-    studentName: "",
-    schoolId: "",
-    gradeLevel: "",
-    subject: "",
-    status: "",
-  });
+  const [filters, setFilters] = useState<StudentFilters>(emptyStudentFilters);
+  const [filterDraft, setFilterDraft] =
+    useState<StudentFilters>(emptyStudentFilters);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [bulkGradeLevel, setBulkGradeLevel] = useState("");
 
   useEffect(() => {
     const timeout = setTimeout(() => {
       setSearch(searchInput);
       setPage(1);
+      setSelectedStudentIds(new Set());
     }, 350);
     return () => clearTimeout(timeout);
   }, [searchInput]);
@@ -193,6 +229,26 @@ export default function StudentsPage() {
         gradeLevel: filters.gradeLevel || undefined,
         status: filters.status || undefined,
       }),
+  });
+
+  const studentsExportQuery = useQuery({
+    queryKey: [
+      "students-export",
+      search,
+      filters.userId,
+      filters.studentName,
+      filters.schoolId,
+      filters.gradeLevel,
+      filters.status,
+    ],
+    queryFn: () =>
+      fetchStudentsExport({
+        search: search || filters.userId || filters.studentName || undefined,
+        schoolId: filters.schoolId || undefined,
+        gradeLevel: filters.gradeLevel || undefined,
+        status: filters.status || undefined,
+      }),
+    enabled: exportOpen,
   });
 
   const createMutation = useMutation({
@@ -254,9 +310,76 @@ export default function StudentsPage() {
     onError: (error) => toast.error(getApiErrorMessage(error)),
   });
 
+  const bulkGradeMutation = useMutation({
+    mutationFn: ({ studentIds, gradeLevel }: { studentIds: string[]; gradeLevel: string }) =>
+      updateStudentsGradeLevel(studentIds, gradeLevel),
+    onSuccess: (result) => {
+      toast.success(
+        `${result.updatedCount} student${result.updatedCount === 1 ? "" : "s"} updated to ${result.gradeLevel}`,
+      );
+      setSelectedStudentIds(new Set());
+      setBulkGradeLevel("");
+      void queryClient.invalidateQueries({ queryKey: ["students"] });
+      void queryClient.invalidateQueries({ queryKey: ["student"] });
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error)),
+  });
+
   const counters = dashboardQuery.data?.counters;
 
   const schools = schoolsQuery.data?.items || [];
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  const visibleStudentIds = studentsQuery.data?.items.map((item) => item._id) || [];
+  const allVisibleStudentsSelected =
+    visibleStudentIds.length > 0 &&
+    visibleStudentIds.every((studentId) => selectedStudentIds.has(studentId));
+  const someVisibleStudentsSelected = visibleStudentIds.some((studentId) =>
+    selectedStudentIds.has(studentId),
+  );
+
+  const handleToggleFilters = () => {
+    setFilterOpen((isOpen) => {
+      if (!isOpen) {
+        setFilterDraft(filters);
+      }
+      return !isOpen;
+    });
+  };
+
+  const handleApplyFilters = () => {
+    setFilters(filterDraft);
+    setPage(1);
+    setSelectedStudentIds(new Set());
+    setFilterOpen(false);
+  };
+
+  const handleClearFilters = () => {
+    setFilterDraft(emptyStudentFilters);
+    setFilters(emptyStudentFilters);
+    setPage(1);
+    setSelectedStudentIds(new Set());
+  };
+
+  const handleToggleStudent = (studentId: string, checked: boolean) => {
+    setSelectedStudentIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(studentId);
+      else next.delete(studentId);
+      return next;
+    });
+  };
+
+  const handleToggleAllStudents = (checked: boolean) => {
+    setSelectedStudentIds(checked ? new Set(visibleStudentIds) : new Set());
+  };
+
+  const handleBulkGradeUpdate = () => {
+    if (!bulkGradeLevel || selectedStudentIds.size === 0) return;
+    bulkGradeMutation.mutate({
+      studentIds: [...selectedStudentIds],
+      gradeLevel: bulkGradeLevel,
+    });
+  };
 
   const selectedSchoolName = schools.find(
     (item) => item._id === formState.schoolId,
@@ -500,15 +623,182 @@ export default function StudentsPage() {
           <ManagementToolbar
             search={searchInput}
             onSearchChange={setSearchInput}
-            onOpenFilter={() => setFilterOpen(true)}
+            onOpenFilter={handleToggleFilters}
+            filterOpen={filterOpen}
+            filterCount={activeFilterCount}
             onOpenCreate={() => setCreateOpen(true)}
             onOpenBulkCreate={() => setBulkCreateOpen(true)}
+            onOpenExport={() => setExportOpen(true)}
             addLabel="Add New"
             className="mb-4"
           />
 
+          {filterOpen ? (
+            <section
+              aria-label="Student filters"
+              className="mb-4 rounded-xl border border-[#dbe8d4] bg-[#f8fcf6] p-4 shadow-[0_8px_24px_rgba(21,77,35,0.06)]"
+            >
+              <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-[#1f2d22]">
+                    Filter students
+                  </h3>
+                  <p className="text-sm text-[#748077]">
+                    Choose one or more options, then apply the filters.
+                  </p>
+                </div>
+                {activeFilterCount > 0 ? (
+                  <span className="w-fit rounded-full bg-[#e2f6e7] px-3 py-1 text-xs font-semibold text-[#087c2d]">
+                    {activeFilterCount} active
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                <div className="space-y-1.5">
+                  <Label htmlFor="filter-student-user-id" className="text-sm">
+                    User ID
+                  </Label>
+                  <Input
+                    id="filter-student-user-id"
+                    value={filterDraft.userId}
+                    onChange={(event) =>
+                      setFilterDraft((prev) => ({
+                        ...prev,
+                        userId: event.target.value,
+                      }))
+                    }
+                    placeholder="Enter user ID"
+                    className="bg-white"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="filter-student-name" className="text-sm">
+                    Student&apos;s Name
+                  </Label>
+                  <Input
+                    id="filter-student-name"
+                    value={filterDraft.studentName}
+                    onChange={(event) =>
+                      setFilterDraft((prev) => ({
+                        ...prev,
+                        studentName: event.target.value,
+                      }))
+                    }
+                    placeholder="Enter student name"
+                    className="bg-white"
+                  />
+                </div>
+
+                <div className="min-w-0 space-y-1.5">
+                  <Label className="text-sm">School Name</Label>
+                  <Select
+                    value={filterDraft.schoolId || "__all__"}
+                    onValueChange={(value) =>
+                      setFilterDraft((prev) => ({
+                        ...prev,
+                        schoolId: value === "__all__" ? "" : value,
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="min-w-0 bg-white">
+                      <SelectValue placeholder="All schools" />
+                    </SelectTrigger>
+                    <SelectContent viewportClassName="h-auto max-h-60 overflow-y-auto">
+                      <SelectItem value="__all__">All Schools</SelectItem>
+                      {schools.map((school) => (
+                        <SelectItem key={school._id} value={school._id}>
+                          {school.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-sm">Grade Level</Label>
+                  <Select
+                    value={filterDraft.gradeLevel || "__all__"}
+                    onValueChange={(value) =>
+                      setFilterDraft((prev) => ({
+                        ...prev,
+                        gradeLevel: value === "__all__" ? "" : value,
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="bg-white">
+                      <SelectValue placeholder="All grade levels" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">All Grade Levels</SelectItem>
+                      {GRADE_LEVELS.map((grade) => (
+                        <SelectItem key={grade} value={grade}>
+                          {grade}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-sm">Status</Label>
+                  <Select
+                    value={filterDraft.status || "__all__"}
+                    onValueChange={(value) =>
+                      setFilterDraft((prev) => ({
+                        ...prev,
+                        status: value === "__all__" ? "" : value,
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="bg-white">
+                      <SelectValue placeholder="All statuses" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">All Statuses</SelectItem>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={handleClearFilters}
+                  className="h-10"
+                >
+                  Clear all
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleApplyFilters}
+                  className="h-10 min-w-36"
+                >
+                  Apply filters
+                </Button>
+              </div>
+            </section>
+          ) : null}
+
+          <BulkGradeAction
+            selectedCount={selectedStudentIds.size}
+            itemLabel="student"
+            gradeLevel={bulkGradeLevel}
+            onGradeLevelChange={setBulkGradeLevel}
+            onApply={handleBulkGradeUpdate}
+            onClear={() => {
+              setSelectedStudentIds(new Set());
+              setBulkGradeLevel("");
+            }}
+            isPending={bulkGradeMutation.isPending}
+          />
+
           {studentsQuery.isLoading ? (
-            <TableSkeleton />
+            <TableSkeleton columns={8} />
           ) : studentsQuery.isError ? (
             <div className="rounded-lg border border-[#ffd3d3] bg-[#fff6f6] p-4 text-[#d73636]">
               {getApiErrorMessage(
@@ -521,6 +811,21 @@ export default function StudentsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12 px-4">
+                      <SelectionCheckbox
+                        checked={allVisibleStudentsSelected}
+                        indeterminate={
+                          someVisibleStudentsSelected && !allVisibleStudentsSelected
+                        }
+                        onChange={(event) =>
+                          handleToggleAllStudents(event.target.checked)
+                        }
+                        disabled={
+                          visibleStudentIds.length === 0 || bulkGradeMutation.isPending
+                        }
+                        aria-label="Select all students on this page"
+                      />
+                    </TableHead>
                     <TableHead>School Name</TableHead>
                     <TableHead>Student&apos;s Name</TableHead>
                     <TableHead>User ID</TableHead>
@@ -532,7 +837,22 @@ export default function StudentsPage() {
                 </TableHeader>
                 <TableBody>
                   {studentsQuery.data?.items.map((item) => (
-                    <TableRow key={item._id}>
+                    <TableRow
+                      key={item._id}
+                      className={
+                        selectedStudentIds.has(item._id) ? "bg-[#f2fbf3]" : undefined
+                      }
+                    >
+                      <TableCell className="w-12 px-4">
+                        <SelectionCheckbox
+                          checked={selectedStudentIds.has(item._id)}
+                          onChange={(event) =>
+                            handleToggleStudent(item._id, event.target.checked)
+                          }
+                          disabled={bulkGradeMutation.isPending}
+                          aria-label={`Select ${item.studentName}`}
+                        />
+                      </TableCell>
                       <TableCell>{item.schoolName}</TableCell>
                       <TableCell>{item.studentName}</TableCell>
                       <TableCell>{item.userId}</TableCell>
@@ -586,7 +906,10 @@ export default function StudentsPage() {
                 <Pagination
                   page={studentsQuery.data?.meta.page || 1}
                   totalPages={studentsQuery.data?.meta.totalPages || 1}
-                  onChange={setPage}
+                  onChange={(nextPage) => {
+                    setSelectedStudentIds(new Set());
+                    setPage(nextPage);
+                  }}
                 />
               </div>
             </div>
@@ -1059,138 +1382,25 @@ export default function StudentsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={filterOpen} onOpenChange={setFilterOpen}>
-        <DialogContent className="max-w-[740px]">
-          <DialogHeader>
-            <DialogTitle className="text-[24px]">Filters</DialogTitle>
-            <DialogDescription className="sr-only">
-              Filter student list
-            </DialogDescription>
-          </DialogHeader>
+      <ExportRecordsDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        title="Export Students"
+        description="Preview all students matching the current search and filters."
+        fileName="students-export.csv"
+        columns={STUDENT_EXPORT_COLUMNS}
+        rows={studentsExportQuery.data || []}
+        isLoading={studentsExportQuery.isLoading || studentsExportQuery.isFetching}
+        errorMessage={
+          studentsExportQuery.isError
+            ? getApiErrorMessage(
+                studentsExportQuery.error,
+                "Failed to load student export data",
+              )
+            : undefined
+        }
+      />
 
-          <div className="grid gap-4">
-            <div className="space-y-2 pb-2">
-              <div>
-                <Label className="text-[18px]">User ID</Label>
-              </div>
-              <div>
-                <Input
-                  value={filters.userId}
-                  onChange={(event) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      userId: event.target.value,
-                    }))
-                  }
-                  placeholder="Enter Your User ID"
-                />
-              </div>
-            </div>
-            <div className="space-y-2 pb-2">
-              <div>
-                <Label className="text-[18px]">Student&apos;s Name</Label>
-              </div>
-              <div>
-                <Input
-                  value={filters.studentName}
-                  onChange={(event) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      studentName: event.target.value,
-                    }))
-                  }
-                  placeholder="Butlar Mane"
-                />
-              </div>
-            </div>
-            <div className="space-y-2 pb-2">
-              <div>
-                <Label className="text-[18px]">School Name</Label>
-              </div>
-              <div>
-                <Select
-                  value={filters.schoolId || "__all__"}
-                  onValueChange={(value) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      schoolId: value === "__all__" ? "" : value,
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select school" />
-                  </SelectTrigger>
-                  <SelectContent viewportClassName="h-auto max-h-60 overflow-y-auto">
-                    <SelectItem value="__all__">All Schools</SelectItem>
-                    {schools.map((school) => (
-                      <SelectItem key={school._id} value={school._id}>
-                        {school.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-2 pb-2">
-              <div>
-                <Label className="text-[18px]">Grade Level</Label>
-              </div>
-              <div>
-                <Select
-                  value={filters.gradeLevel || "__all__"}
-                  onValueChange={(value) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      gradeLevel: value === "__all__" ? "" : value,
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select grade level" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">All Grade Levels</SelectItem>
-                    {GRADE_LEVELS.map((grade) => (
-                      <SelectItem key={grade} value={grade}>
-                        {grade}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-2 pb-2">
-              <div>
-                <Label className="text-[18px]">Subject</Label>
-              </div>
-              <div>
-                <PasswordInput
-                  value={filters.subject}
-                  onChange={(event) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      subject: event.target.value,
-                    }))
-                  }
-                  placeholder="**********"
-                />
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter className="sm:justify-center">
-            <Button
-              onClick={() => {
-                setPage(1);
-                setFilterOpen(false);
-              }}
-              className="w-full max-w-[260px]"
-            >
-              Search
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

@@ -99,6 +99,29 @@ export interface TeacherListItem {
   courses: TeacherCourse[];
 }
 
+export interface StudentExportRow {
+  serialNumber: string;
+  schoolName: string;
+  studentName: string;
+  userId: string;
+  gradeLevel: string;
+}
+
+export interface TeacherExportRow {
+  serialNumber: string;
+  schoolName: string;
+  teacherName: string;
+  userId: string;
+  gradeLevel: string;
+}
+
+export interface SchoolExportRow {
+  serialNumber: number;
+  schoolName: string;
+  schoolCode: string;
+  gradeLevel: string;
+}
+
 export interface SchoolItem {
   _id: string;
   name: string;
@@ -128,6 +151,11 @@ export interface BulkCreateResult<T> {
     message: string;
     item?: unknown;
   }>;
+}
+
+export interface BulkGradeUpdateResult {
+  updatedCount: number;
+  gradeLevel: string;
 }
 
 export interface BulkStudentPayload {
@@ -493,6 +521,19 @@ export const fetchStudents = async (params: {
   return unwrap(response);
 };
 
+export const fetchStudentsExport = async (params: {
+  search?: string;
+  schoolId?: string;
+  gradeLevel?: string;
+  status?: string;
+}) => {
+  const response = await apiClient.get<ApiEnvelope<StudentExportRow[]>>(
+    "/admin/students/export",
+    { params: compactParams(params) },
+  );
+  return unwrap(response);
+};
+
 export const fetchStudentById = async (studentId: string) => {
   const response = await apiClient.get<ApiEnvelope<StudentDetailsData>>(
     `/admin/students/${studentId}`,
@@ -534,6 +575,17 @@ export const updateStudent = async (studentId: string, payload: FormData) => {
   return unwrap(response);
 };
 
+export const updateStudentsGradeLevel = async (
+  studentIds: string[],
+  gradeLevel: string,
+) => {
+  const response = await apiClient.patch<ApiEnvelope<BulkGradeUpdateResult>>(
+    "/admin/students/bulk/grade-level",
+    { studentIds, gradeLevel },
+  );
+  return unwrap(response);
+};
+
 export const deleteStudent = async (studentId: string) => {
   const response = await apiClient.delete<ApiEnvelope<null>>(
     `/admin/students/${studentId}`,
@@ -554,6 +606,19 @@ export const fetchTeachers = async (params: {
     {
       params: compactParams(params),
     },
+  );
+  return unwrap(response);
+};
+
+export const fetchTeachersExport = async (params: {
+  search?: string;
+  schoolId?: string;
+  gradeLevel?: string;
+  status?: string;
+}) => {
+  const response = await apiClient.get<ApiEnvelope<TeacherExportRow[]>>(
+    "/admin/teachers/export",
+    { params: compactParams(params) },
   );
   return unwrap(response);
 };
@@ -609,6 +674,17 @@ export const updateTeacher = async (teacherId: string, payload: FormData) => {
   return unwrap(response);
 };
 
+export const updateTeachersGradeLevel = async (
+  teacherIds: string[],
+  gradeLevel: string,
+) => {
+  const response = await apiClient.patch<ApiEnvelope<BulkGradeUpdateResult>>(
+    "/admin/teachers/bulk/grade-level",
+    { teacherIds, gradeLevel },
+  );
+  return unwrap(response);
+};
+
 export const deleteTeacher = async (teacherId: string) => {
   const response = await apiClient.delete<ApiEnvelope<null>>(
     `/admin/teachers/${teacherId}`,
@@ -627,6 +703,17 @@ export const fetchSchools = async (params: {
     {
       params: compactParams(params),
     },
+  );
+  return unwrap(response);
+};
+
+export const fetchSchoolsExport = async (params: {
+  search?: string;
+  status?: string;
+}) => {
+  const response = await apiClient.get<ApiEnvelope<SchoolExportRow[]>>(
+    "/admin/schools/export",
+    { params: compactParams(params) },
   );
   return unwrap(response);
 };
@@ -664,6 +751,17 @@ export const updateSchool = async (
   const response = await apiClient.patch<ApiEnvelope<SchoolItem>>(
     `/admin/schools/${schoolId}`,
     payload,
+  );
+  return unwrap(response);
+};
+
+export const updateSchoolsGradeLevel = async (
+  schoolIds: string[],
+  gradeLevel: string,
+) => {
+  const response = await apiClient.patch<ApiEnvelope<BulkGradeUpdateResult>>(
+    "/admin/schools/bulk/grade-level",
+    { schoolIds, gradeLevel },
   );
   return unwrap(response);
 };
