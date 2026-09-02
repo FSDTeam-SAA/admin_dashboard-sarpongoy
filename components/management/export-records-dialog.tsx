@@ -1,7 +1,9 @@
 "use client";
 
-import { Download, Loader2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Download, Loader2, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -53,11 +55,31 @@ export function ExportRecordsDialog<T extends object>({
   isLoading = false,
   errorMessage,
 }: ExportRecordsDialogProps<T>) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+
+  const filteredRows = useMemo(() => {
+    if (!normalizedSearch) return rows;
+
+    return rows.filter((row) =>
+      columns.some((column) =>
+        String(row[column.key] ?? "")
+          .toLowerCase()
+          .includes(normalizedSearch),
+      ),
+    );
+  }, [columns, normalizedSearch, rows]);
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) setSearchQuery("");
+    onOpenChange(nextOpen);
+  };
+
   const handleDownload = () => {
-    if (rows.length === 0) return;
+    if (filteredRows.length === 0) return;
 
     const header = columns.map((column) => escapeCsvValue(column.label)).join(",");
-    const body = rows
+    const body = filteredRows
       .map((row) =>
         columns.map((column) => escapeCsvValue(row[column.key])).join(","),
       )
@@ -76,14 +98,29 @@ export function ExportRecordsDialog<T extends object>({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-[1100px] overflow-hidden p-0">
         <DialogHeader className="mb-0 px-6 pb-4 pt-6">
           <DialogTitle className="text-2xl">{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
-        <div className="max-h-[58vh] overflow-auto border-y border-[#e2e8dc]">
+        <div className="px-6 pb-4">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7b837c]" />
+            <Input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search export records..."
+              aria-label={`Search ${title.toLowerCase()}`}
+              disabled={isLoading || Boolean(errorMessage)}
+              className="pl-9"
+            />
+          </div>
+        </div>
+
+        <div className="max-h-[52vh] overflow-auto border-y border-[#e2e8dc]">
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-[#f7faf4]">
               <TableRow>
@@ -113,17 +150,19 @@ export function ExportRecordsDialog<T extends object>({
                     {errorMessage}
                   </TableCell>
                 </TableRow>
-              ) : rows.length === 0 ? (
+              ) : filteredRows.length === 0 ? (
                 <TableRow>
                   <TableCell
                     colSpan={columns.length}
                     className="h-32 text-center text-[#6c756d]"
                   >
-                    No records available to export.
+                    {normalizedSearch
+                      ? "No records match your search."
+                      : "No records available to export."}
                   </TableCell>
                 </TableRow>
               ) : (
-                rows.map((row, rowIndex) => (
+                filteredRows.map((row, rowIndex) => (
                   <TableRow key={`${String(row[columns[0].key])}-${rowIndex}`}>
                     {columns.map((column) => (
                       <TableCell
@@ -142,12 +181,18 @@ export function ExportRecordsDialog<T extends object>({
 
         <DialogFooter className="m-0 items-center justify-between px-6 py-4 sm:justify-between">
           <p className="text-sm text-[#687069]">
-            {isLoading ? "Loading records..." : `${rows.length} records`}
+            {isLoading
+              ? "Loading records..."
+              : normalizedSearch
+                ? `${filteredRows.length} of ${rows.length} records`
+                : `${rows.length} records`}
           </p>
           <Button
             type="button"
             onClick={handleDownload}
-            disabled={isLoading || Boolean(errorMessage) || rows.length === 0}
+            disabled={
+              isLoading || Boolean(errorMessage) || filteredRows.length === 0
+            }
             className="gap-2"
           >
             <Download className="h-4 w-4" />

@@ -212,6 +212,10 @@ export interface StudentDetailsData {
     };
     subjectProgress: Array<{
       subject: string;
+      totalActivities: number;
+      completedActivities: number;
+      totalHours: number;
+      avgQuizScore: number;
       completionRate: number;
     }>;
     recentWork: Array<{

@@ -61,6 +61,10 @@ type SubjectStyle = {
 
 type SubjectTile = SubjectStyle & {
   subject: string;
+  totalActivities: number;
+  completedActivities: number;
+  totalHours: number;
+  avgQuizScore: number;
   completionRate: number;
 };
 
@@ -146,13 +150,24 @@ const formatScaledScore = (score: number | null, scale: number) => {
 };
 
 const buildSubjectTiles = (
-  subjectProgress: Array<{ subject: string; completionRate: number }>,
+  subjectProgress: Array<{
+    subject: string;
+    totalActivities: number;
+    completedActivities: number;
+    totalHours: number;
+    avgQuizScore: number;
+    completionRate: number;
+  }>,
 ) => {
   const tiles: SubjectTile[] = subjectProgress.map((item) => {
     const style = resolveSubjectStyle(item.subject || "");
     return {
       ...style,
       subject: item.subject || style.label,
+      totalActivities: item.totalActivities || 0,
+      completedActivities: item.completedActivities || 0,
+      totalHours: item.totalHours || 0,
+      avgQuizScore: item.avgQuizScore || 0,
       completionRate: clamp(Math.round(item.completionRate || 0), 0, 100),
     };
   });
@@ -164,6 +179,10 @@ const buildSubjectTiles = (
     tiles.push({
       ...style,
       subject: style.label,
+      totalActivities: 0,
+      completedActivities: 0,
+      totalHours: 0,
+      avgQuizScore: 0,
       completionRate: 0,
     });
     seen.add(key);
@@ -177,6 +196,7 @@ export default function StudentDetailsPage() {
   const studentId = params.studentId;
   const queryClient = useQueryClient();
   const [resetOpen, setResetOpen] = useState(false);
+  const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
   const [passwordState, setPasswordState] = useState({
     password: "",
     confirmPassword: "",
@@ -204,17 +224,31 @@ export default function StudentDetailsPage() {
     [studentQuery.data?.progressSheet.subjectProgress],
   );
 
-  const chartData = useMemo(() => {
-    const summary = studentQuery.data?.progressSheet.summary;
-    const recentWork = studentQuery.data?.progressSheet.recentWork || [];
+  const activeSubject = selectedSubject || subjectTiles[0]?.subject || "";
+  const activeSubjectTile = subjectTiles.find(
+    (subject) => normalizeText(subject.subject) === normalizeText(activeSubject),
+  );
 
-    if (!summary) {
+  const selectedRecentWork = useMemo(() => {
+    const recentWork = studentQuery.data?.progressSheet.recentWork || [];
+    if (!activeSubject) return [];
+
+    return recentWork.filter(
+      (item) => normalizeText(item.subject || "") === normalizeText(activeSubject),
+    );
+  }, [activeSubject, studentQuery.data?.progressSheet.recentWork]);
+
+  const chartData = useMemo(() => {
+    const summary = activeSubjectTile;
+    const recentWork = selectedRecentWork;
+
+    if (!summary || summary.totalActivities === 0) {
       return WEEK_DAYS.map((day) => ({
         day,
-        activityCount: 30,
-        avgDailyHours: 25,
-        totalHours: 35,
-        avgQuizScore: 40,
+        activityCount: 0,
+        avgDailyHours: 0,
+        totalHours: 0,
+        avgQuizScore: 0,
       }));
     }
 
@@ -256,7 +290,7 @@ export default function StudentDetailsPage() {
         avgQuizScore: clamp(Math.round(Number(score || 0)), 12, 100),
       };
     });
-  }, [studentQuery.data?.progressSheet]);
+  }, [activeSubjectTile, selectedRecentWork]);
 
   const lowestQuizScoreBySubject = useMemo(() => {
     const map = new Map<string, number>();
@@ -284,14 +318,13 @@ export default function StudentDetailsPage() {
     );
   }
 
-  const { student, progressSheet } = studentQuery.data;
-  const selectedSubject = subjectTiles[0];
+  const { student } = studentQuery.data;
   const studentNamePrefix = (student.studentName || "Student").split(" ")[0];
-  const recentRows = progressSheet.recentWork.slice(0, 5);
-  const activityCountLabel = `${String(progressSheet.summary.completedActivities).padStart(2, "0")}/${Math.max(progressSheet.summary.totalActivities, 1)}`;
-  const avgDailyHoursLabel = `${(progressSheet.summary.totalHours / 7).toFixed(1)}/24`;
-  const totalHoursLabel = `${progressSheet.summary.totalHours.toFixed(1)}h`;
-  const averageQuizLabel = `${Math.round(progressSheet.summary.avgQuizScore)}/100`;
+  const recentRows = selectedRecentWork.slice(0, 5);
+  const activityCountLabel = `${String(activeSubjectTile?.completedActivities || 0).padStart(2, "0")}/${activeSubjectTile?.totalActivities || 0}`;
+  const avgDailyHoursLabel = `${((activeSubjectTile?.totalHours || 0) / 7).toFixed(1)}/24`;
+  const totalHoursLabel = `${(activeSubjectTile?.totalHours || 0).toFixed(1)}h`;
+  const averageQuizLabel = `${Math.round(activeSubjectTile?.avgQuizScore || 0)}/100`;
 
   const handleResetPassword = () => {
     if (!passwordState.password || !passwordState.confirmPassword) {
@@ -378,16 +411,22 @@ export default function StudentDetailsPage() {
               Select subject and see the progress
             </p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-              {subjectTiles.map((subject, index) => {
+              {subjectTiles.map((subject) => {
                 const Icon = subject.icon;
-                const isSelected = index === 0;
+                const isSelected = subject.subject === activeSubject;
                 return (
-                  <div
+                  <button
                     key={subject.subject}
-                    className="rounded-xl border p-4 text-center"
+                    type="button"
+                    onClick={() => setSelectedSubject(subject.subject)}
+                    aria-pressed={isSelected}
+                    className="cursor-pointer rounded-xl border p-4 text-center transition-[box-shadow,transform] hover:-translate-y-0.5 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
                     style={{
                       backgroundColor: subject.bg,
                       borderColor: isSelected ? subject.border : "#e2e7db",
+                      boxShadow: isSelected
+                        ? `0 0 0 2px ${subject.border}33`
+                        : undefined,
                     }}
                   >
                     <div className="mx-auto mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-white/60">
@@ -396,7 +435,7 @@ export default function StudentDetailsPage() {
                     <p className="text-[13px] font-semibold" style={{ color: subject.text }}>
                       {subject.subject}
                     </p>
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -471,7 +510,7 @@ export default function StudentDetailsPage() {
       <Card className="content-shell">
         <CardContent className="p-5">
           <h3 className="text-center text-[30px] font-semibold text-[#22a63a]">
-            {selectedSubject?.subject || "Subject Overview"}
+            {activeSubject || "Subject Overview"}
           </h3>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <MetricCard
