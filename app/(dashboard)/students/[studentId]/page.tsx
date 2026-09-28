@@ -304,8 +304,9 @@ export default function StudentDetailsPage() {
             dataKey="avgDailyHours"
             legend="Avg. Daily Hours"
             color="#ffa1aa"
-            domain={[0, 12]}
-            ticks={[0, 4, 8, 12]}
+            domain={[0, 32]}
+            ticks={[0, 2, 4, 8, 16, 32]}
+            yAxisScale="symlog"
           />
 
           <TrendChart
@@ -489,6 +490,7 @@ function TrendChart({
   color,
   domain,
   ticks,
+  yAxisScale = "linear",
 }: {
   title: string;
   data: Array<{ label: string; avgDailyHours: number; avgQuizScore: number }>;
@@ -497,6 +499,7 @@ function TrendChart({
   color: string;
   domain: [number, number];
   ticks: number[];
+  yAxisScale?: "linear" | "symlog";
 }) {
   return (
     <section className="mt-8">
@@ -506,7 +509,14 @@ function TrendChart({
           <LineChart data={data} margin={{ top: 10, right: 12, left: 0, bottom: 4 }}>
             <CartesianGrid strokeDasharray="4 4" stroke="#dfe5dc" />
             <XAxis dataKey="label" tickLine={false} axisLine={false} />
-            <YAxis domain={domain} ticks={ticks} tickLine={false} axisLine={false} />
+            <YAxis
+              domain={domain}
+              ticks={ticks}
+              scale={yAxisScale}
+              interval={0}
+              tickLine={false}
+              axisLine={false}
+            />
             <Tooltip />
             <Legend verticalAlign="bottom" />
             <Line
