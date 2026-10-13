@@ -6,6 +6,8 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, Loader2, Pencil, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { useErrorFeedback, type ErrorDetail } from "@/components/management/error-feedback";
+import { DeleteConfirmationDialog } from "@/components/management/delete-confirmation-dialog";
 import {
   createStudentsBulk,
   createStudent,
@@ -152,6 +154,8 @@ const initialEditForm: StudentEditFormState = {
 
 export default function StudentsPage() {
   const queryClient = useQueryClient();
+  const { showError, showBulkErrors } = useErrorFeedback();
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
 
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState("");
@@ -262,7 +266,7 @@ export default function StudentsPage() {
       void queryClient.invalidateQueries({ queryKey: ["schools"] });
     },
     onError: (error) => {
-      toast.error(getApiErrorMessage(error));
+      showError(error);
     },
   });
 
@@ -278,7 +282,7 @@ export default function StudentsPage() {
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["schools"] });
     },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
+    onError: (error) => showError(error),
   });
 
   const bulkCreateMutation = useMutation({
@@ -286,7 +290,7 @@ export default function StudentsPage() {
     onSuccess: (result) => {
       const failedCount = result.failed.length;
       if (failedCount > 0) {
-        toast.error(`${result.created.length} students created, ${failedCount} failed`);
+        showBulkErrors(result, "students");
       } else {
         toast.success(`${result.created.length} students created successfully`);
       }
@@ -297,17 +301,21 @@ export default function StudentsPage() {
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["schools"] });
     },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
+    onError: (error) => showError(error),
   });
 
   const deleteMutation = useMutation({
     mutationFn: deleteStudent,
     onSuccess: () => {
+      setDeleteTargetId(null);
       toast.success("Student deleted successfully");
       void queryClient.invalidateQueries({ queryKey: ["students"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
+    onError: (error) => {
+      setDeleteTargetId(null);
+      showError(error);
+    },
   });
 
   const bulkGradeMutation = useMutation({
@@ -322,7 +330,7 @@ export default function StudentsPage() {
       void queryClient.invalidateQueries({ queryKey: ["students"] });
       void queryClient.invalidateQueries({ queryKey: ["student"] });
     },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
+    onError: (error) => showError(error),
   });
 
   const counters = dashboardQuery.data?.counters;
@@ -422,12 +430,12 @@ export default function StudentsPage() {
     }
 
     if (!IMAGE_MIME_TYPES.has(file.type)) {
-      toast.error("Picture must be JPG, PNG, or WEBP");
+      showError("Picture must be JPG, PNG, or WEBP");
       return;
     }
 
     if (file.size > MAX_UPLOAD_SIZE_BYTES) {
-      toast.error("Picture must be 10MB or smaller");
+      showError("Picture must be 10MB or smaller");
       return;
     }
 
@@ -445,12 +453,12 @@ export default function StudentsPage() {
     }
 
     if (!FILE_MIME_TYPES.has(file.type)) {
-      toast.error("File must be PDF, JPG, PNG, or WEBP");
+      showError("File must be PDF, JPG, PNG, or WEBP");
       return;
     }
 
     if (file.size > MAX_UPLOAD_SIZE_BYTES) {
-      toast.error("File must be 10MB or smaller");
+      showError("File must be 10MB or smaller");
       return;
     }
 
@@ -464,11 +472,11 @@ export default function StudentsPage() {
 
   const handleCreateStudent = () => {
     if (!formState.schoolId) {
-      toast.error("School is required");
+      showError("School is required");
       return;
     }
     if (formState.password !== formState.confirmPassword) {
-      toast.error("Passwords do not match");
+      showError("Passwords do not match");
       return;
     }
 
@@ -515,11 +523,11 @@ export default function StudentsPage() {
       !editFormState.userId.trim() ||
       !editFormState.gradeLevel
     ) {
-      toast.error("School, student name, user ID, and grade level are required");
+      showError("School, student name, user ID, and grade level are required");
       return;
     }
     if (editFormState.password !== editFormState.confirmPassword) {
-      toast.error("Passwords do not match");
+      showError("Passwords do not match");
       return;
     }
 
@@ -545,17 +553,23 @@ export default function StudentsPage() {
         : parsedRows;
 
     if (rows.length === 0) {
-      toast.error("Add at least one student row");
+      showError("Add at least one student row");
       return null;
     }
 
     const students: BulkStudentPayload[] = [];
+    const validationErrors: ErrorDetail[] = [];
     for (const [index, row] of rows.entries()) {
       const [schoolName, studentName, userId, password, gradeLevel, status] = row;
 
       if (!schoolName || !studentName || !userId || !password || !gradeLevel) {
-        toast.error(`Row ${index + 1} is missing required values`);
-        return null;
+        const missing = Object.entries({"School Name": schoolName, "Student Name": studentName, "User ID": userId, "Password": password, "Grade Level": gradeLevel})
+          .filter(([, value]) => !value).map(([label]) => label);
+        validationErrors.push({
+          label: `Data row ${index + 1}`,
+          message: `Missing required values: ${missing.join(", ")}`,
+        });
+        continue;
       }
 
       students.push({
@@ -569,6 +583,10 @@ export default function StudentsPage() {
       });
     }
 
+    if (validationErrors.length) {
+      showError(`${validationErrors.length} CSV rows have missing required values`, validationErrors);
+      return null;
+    }
     return students;
   };
 
@@ -581,7 +599,7 @@ export default function StudentsPage() {
   const handleBulkCsvUpload = async (file: File | null) => {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".csv")) {
-      toast.error("Upload a CSV file");
+      showError("Upload a CSV file");
       return;
     }
     setBulkText(await file.text());
@@ -589,9 +607,7 @@ export default function StudentsPage() {
   };
 
   const handleDelete = (studentId: string) => {
-    const proceed = window.confirm("Delete this student?");
-    if (!proceed) return;
-    deleteMutation.mutate(studentId);
+    setDeleteTargetId(studentId);
   };
 
   return (
@@ -1398,6 +1414,15 @@ export default function StudentsPage() {
         }
       />
 
+      <DeleteConfirmationDialog
+        open={deleteTargetId !== null}
+        entity="student"
+        isPending={deleteMutation.isPending}
+        onCancel={() => setDeleteTargetId(null)}
+        onConfirm={() => {
+          if (deleteTargetId && !deleteMutation.isPending) deleteMutation.mutate(deleteTargetId);
+        }}
+      />
     </div>
   );
 }

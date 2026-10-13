@@ -6,6 +6,8 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, Loader2, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { useErrorFeedback, type ErrorDetail } from "@/components/management/error-feedback";
+import { DeleteConfirmationDialog } from "@/components/management/delete-confirmation-dialog";
 import {
   createTeachersBulk,
   createTeacher,
@@ -114,6 +116,8 @@ const initialForm: TeacherFormState = {
 
 export default function TeachersPage() {
   const queryClient = useQueryClient();
+  const { showError, showBulkErrors } = useErrorFeedback();
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -228,7 +232,7 @@ export default function TeachersPage() {
       void queryClient.invalidateQueries({ queryKey: ["teachers"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
+    onError: (error) => showError(error),
   });
 
   const bulkCreateMutation = useMutation({
@@ -236,7 +240,7 @@ export default function TeachersPage() {
     onSuccess: (result) => {
       const failedCount = result.failed.length;
       if (failedCount > 0) {
-        toast.error(`${result.created.length} teachers created, ${failedCount} failed`);
+        showBulkErrors(result, "teachers");
       } else {
         toast.success(`${result.created.length} teachers created successfully`);
       }
@@ -247,17 +251,21 @@ export default function TeachersPage() {
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       void queryClient.invalidateQueries({ queryKey: ["schools"] });
     },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
+    onError: (error) => showError(error),
   });
 
   const deleteMutation = useMutation({
     mutationFn: deleteTeacher,
     onSuccess: () => {
+      setDeleteTargetId(null);
       toast.success("Teacher deleted successfully");
       void queryClient.invalidateQueries({ queryKey: ["teachers"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
+    onError: (error) => {
+      setDeleteTargetId(null);
+      showError(error);
+    },
   });
 
   const bulkGradeMutation = useMutation({
@@ -272,7 +280,7 @@ export default function TeachersPage() {
       void queryClient.invalidateQueries({ queryKey: ["teachers"] });
       void queryClient.invalidateQueries({ queryKey: ["teacher"] });
     },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
+    onError: (error) => showError(error),
   });
 
   const counters = dashboardQuery.data?.counters;
@@ -348,12 +356,12 @@ export default function TeachersPage() {
     }
 
     if (!IMAGE_MIME_TYPES.has(file.type)) {
-      toast.error("Picture must be JPG, PNG, or WEBP");
+      showError("Picture must be JPG, PNG, or WEBP");
       return;
     }
 
     if (file.size > MAX_UPLOAD_SIZE_BYTES) {
-      toast.error("Picture must be 10MB or smaller");
+      showError("Picture must be 10MB or smaller");
       return;
     }
 
@@ -371,12 +379,12 @@ export default function TeachersPage() {
     }
 
     if (!FILE_MIME_TYPES.has(file.type)) {
-      toast.error("File must be PDF, JPG, PNG, or WEBP");
+      showError("File must be PDF, JPG, PNG, or WEBP");
       return;
     }
 
     if (file.size > MAX_UPLOAD_SIZE_BYTES) {
-      toast.error("File must be 10MB or smaller");
+      showError("File must be 10MB or smaller");
       return;
     }
 
@@ -390,12 +398,12 @@ export default function TeachersPage() {
 
   const handleCreate = () => {
     if (!formState.schoolId) {
-      toast.error("School is required");
+      showError("School is required");
       return;
     }
 
     if (formState.password !== formState.confirmPassword) {
-      toast.error("Passwords do not match");
+      showError("Passwords do not match");
       return;
     }
 
@@ -436,17 +444,23 @@ export default function TeachersPage() {
         : parsedRows;
 
     if (rows.length === 0) {
-      toast.error("Add at least one teacher row");
+      showError("Add at least one teacher row");
       return null;
     }
 
     const teachers: BulkTeacherPayload[] = [];
+    const validationErrors: ErrorDetail[] = [];
     for (const [index, row] of rows.entries()) {
       const [schoolName, teacherName, userId, password, gradeLevel] = row;
 
       if (!schoolName || !teacherName || !userId || !password || !gradeLevel) {
-        toast.error(`Row ${index + 1} is missing required values`);
-        return null;
+        const missing = Object.entries({"School Name": schoolName, "Teacher Name": teacherName, "User ID": userId, "Password": password, "Grade Level": gradeLevel})
+          .filter(([, value]) => !value).map(([label]) => label);
+        validationErrors.push({
+          label: `Data row ${index + 1}`,
+          message: `Missing required values: ${missing.join(", ")}`,
+        });
+        continue;
       }
 
       const optionalValues = row.slice(5).filter(Boolean);
@@ -470,6 +484,10 @@ export default function TeachersPage() {
       });
     }
 
+    if (validationErrors.length) {
+      showError(`${validationErrors.length} CSV rows have missing required values`, validationErrors);
+      return null;
+    }
     return teachers;
   };
 
@@ -482,7 +500,7 @@ export default function TeachersPage() {
   const handleBulkCsvUpload = async (file: File | null) => {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".csv")) {
-      toast.error("Upload a CSV file");
+      showError("Upload a CSV file");
       return;
     }
     setBulkText(await file.text());
@@ -490,8 +508,7 @@ export default function TeachersPage() {
   };
 
   const handleDelete = (teacherId: string) => {
-    if (!window.confirm("Delete this teacher?")) return;
-    deleteMutation.mutate(teacherId);
+    setDeleteTargetId(teacherId);
   };
 
   return (
@@ -1117,6 +1134,15 @@ export default function TeachersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <DeleteConfirmationDialog
+        open={deleteTargetId !== null}
+        entity="teacher"
+        isPending={deleteMutation.isPending}
+        onCancel={() => setDeleteTargetId(null)}
+        onConfirm={() => {
+          if (deleteTargetId && !deleteMutation.isPending) deleteMutation.mutate(deleteTargetId);
+        }}
+      />
     </div>
   );
 }

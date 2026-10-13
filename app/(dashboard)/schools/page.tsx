@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Loader2, Plus, Search, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { useErrorFeedback, type ErrorDetail } from "@/components/management/error-feedback";
+import { DeleteConfirmationDialog } from "@/components/management/delete-confirmation-dialog";
 import {
   createSchoolsBulk,
   createSchool,
@@ -65,6 +67,8 @@ const SCHOOL_EXPORT_COLUMNS = [
 
 export default function SchoolManagementPage() {
   const queryClient = useQueryClient();
+  const { showError, showBulkErrors } = useErrorFeedback();
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -124,7 +128,7 @@ export default function SchoolManagementPage() {
       });
       void queryClient.invalidateQueries({ queryKey: ["schools"] });
     },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
+    onError: (error) => showError(error),
   });
 
   const bulkCreateMutation = useMutation({
@@ -132,7 +136,7 @@ export default function SchoolManagementPage() {
     onSuccess: (result) => {
       const failedCount = result.failed.length;
       if (failedCount > 0) {
-        toast.error(`${result.created.length} schools created, ${failedCount} failed`);
+        showBulkErrors(result, "schools");
       } else {
         toast.success(`${result.created.length} schools created successfully`);
       }
@@ -141,16 +145,20 @@ export default function SchoolManagementPage() {
       setBulkFileName("");
       void queryClient.invalidateQueries({ queryKey: ["schools"] });
     },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
+    onError: (error) => showError(error),
   });
 
   const deleteMutation = useMutation({
     mutationFn: deleteSchool,
     onSuccess: () => {
+      setDeleteTargetId(null);
       toast.success("School deleted successfully");
       void queryClient.invalidateQueries({ queryKey: ["schools"] });
     },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
+    onError: (error) => {
+      setDeleteTargetId(null);
+      showError(error);
+    },
   });
 
   const updateMutation = useMutation({
@@ -170,7 +178,7 @@ export default function SchoolManagementPage() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["schools"] });
     },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
+    onError: (error) => showError(error),
   });
 
   const bulkGradeMutation = useMutation({
@@ -184,7 +192,7 @@ export default function SchoolManagementPage() {
       setBulkGradeLevel("");
       void queryClient.invalidateQueries({ queryKey: ["schools"] });
     },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
+    onError: (error) => showError(error),
   });
 
   const visibleSchoolIds = schoolsQuery.data?.items.map((item) => item._id) || [];
@@ -218,7 +226,7 @@ export default function SchoolManagementPage() {
 
   const handleCreate = () => {
     if (!formState.name || !formState.schoolCode) {
-      toast.error("School name and school code are required");
+      showError("School name and school code are required");
       return;
     }
 
@@ -238,17 +246,23 @@ export default function SchoolManagementPage() {
         : parsedRows;
 
     if (rows.length === 0) {
-      toast.error("Add at least one school row");
+      showError("Add at least one school row");
       return null;
     }
 
     const schools: BulkSchoolPayload[] = [];
+    const validationErrors: ErrorDetail[] = [];
     for (const [index, row] of rows.entries()) {
       const [name, schoolCode, gradeLevel, status] = row;
 
       if (!name || !schoolCode) {
-        toast.error(`Row ${index + 1} is missing required values`);
-        return null;
+        const missing = Object.entries({"School Name": name, "School Code": schoolCode})
+          .filter(([, value]) => !value).map(([label]) => label);
+        validationErrors.push({
+          label: `Data row ${index + 1}`,
+          message: `Missing required values: ${missing.join(", ")}`,
+        });
+        continue;
       }
 
       schools.push({
@@ -259,6 +273,10 @@ export default function SchoolManagementPage() {
       });
     }
 
+    if (validationErrors.length) {
+      showError(`${validationErrors.length} CSV rows have missing required values`, validationErrors);
+      return null;
+    }
     return schools;
   };
 
@@ -271,7 +289,7 @@ export default function SchoolManagementPage() {
   const handleBulkCsvUpload = async (file: File | null) => {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".csv")) {
-      toast.error("Upload a CSV file");
+      showError("Upload a CSV file");
       return;
     }
     setBulkText(await file.text());
@@ -279,8 +297,7 @@ export default function SchoolManagementPage() {
   };
 
   const handleDelete = (schoolId: string) => {
-    if (!window.confirm("Delete this school?")) return;
-    deleteMutation.mutate(schoolId);
+    setDeleteTargetId(schoolId);
   };
 
   return (
@@ -674,6 +691,15 @@ export default function SchoolManagementPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <DeleteConfirmationDialog
+        open={deleteTargetId !== null}
+        entity="school"
+        isPending={deleteMutation.isPending}
+        onCancel={() => setDeleteTargetId(null)}
+        onConfirm={() => {
+          if (deleteTargetId && !deleteMutation.isPending) deleteMutation.mutate(deleteTargetId);
+        }}
+      />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SessionProvider, signOut, useSession } from "next-auth/react";
 import { Toaster } from "sonner";
+import { ErrorFeedbackProvider } from "@/components/management/error-feedback";
 import { configureApiAuthBridge } from "@/lib/api";
 
 function ApiSessionBridge() {
@@ -49,7 +50,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <SessionProvider>
       <QueryProvider>
         <ApiSessionBridge />
-        {children}
+        <ErrorFeedbackProvider>{children}</ErrorFeedbackProvider>
         <Toaster
           richColors
           position="top-right"
