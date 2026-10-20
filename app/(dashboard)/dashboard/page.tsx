@@ -260,13 +260,13 @@ export default function DashboardPage() {
 
   const subjectDistribution =
     mainData.charts?.subjectDistribution ||
-    mainData.charts?.overallSubjectDistribution ||
     [];
+  const quizDistribution = mainData.charts?.overallSubjectDistribution || [];
 
   const totalQuizCompleted =
     mainData.counters.totalQuizCompleted ??
     mainData.counts?.totalQuizCompleted ??
-    subjectDistribution.reduce(
+    quizDistribution.reduce(
       (total, item) => total + item.completed,
       0,
     );
@@ -276,7 +276,7 @@ export default function DashboardPage() {
     value: item.completed,
   }));
 
-  const overallQuizChartData = subjectDistribution.map((item) => ({
+  const overallQuizChartData = quizDistribution.map((item) => ({
     name: item.subject,
     value: item.completed,
   }));
