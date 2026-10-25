@@ -271,12 +271,16 @@ export default function DashboardPage() {
       0,
     );
 
-  const subjectChartData = subjectDistribution.map((item) => ({
+  // Hide Computing only in dashboard charts; retain API data and counters.
+  const isVisibleSubject = (item: { subject: string }) =>
+    item.subject.trim().toLowerCase() !== "computing";
+
+  const subjectChartData = subjectDistribution.filter(isVisibleSubject).map((item) => ({
     name: item.subject,
     value: item.completed,
   }));
 
-  const overallQuizChartData = quizDistribution.map((item) => ({
+  const overallQuizChartData = quizDistribution.filter(isVisibleSubject).map((item) => ({
     name: item.subject,
     value: item.completed,
   }));
