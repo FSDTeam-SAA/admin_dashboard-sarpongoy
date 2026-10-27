@@ -85,8 +85,6 @@ export default function SchoolManagementPage() {
   const [formState, setFormState] = useState({
     name: "",
     schoolCode: "",
-    totalStudent: "",
-    totalTeacher: "",
     gradeLevel: "JHS 1",
   });
 
@@ -101,6 +99,8 @@ export default function SchoolManagementPage() {
 
   const schoolsQuery = useQuery({
     queryKey: ["schools", page, search],
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
     queryFn: () =>
       fetchSchools({
         page,
@@ -123,8 +123,6 @@ export default function SchoolManagementPage() {
       setFormState({
         name: "",
         schoolCode: "",
-        totalStudent: "",
-        totalTeacher: "",
         gradeLevel: "JHS 1",
       });
       void queryClient.invalidateQueries({ queryKey: ["schools"] });
@@ -555,16 +553,10 @@ export default function SchoolManagementPage() {
                 <Label className="text-[18px]">Total Student</Label>
               </div>
               <div>
-                <Input
-                  value={formState.totalStudent}
-                  onChange={(event) =>
-                    setFormState((prev) => ({
-                      ...prev,
-                      totalStudent: event.target.value,
-                    }))
-                  }
-                  placeholder="50"
-                />
+                <Input value="0" readOnly aria-label="Total Student" />
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Calculated automatically as student accounts are added or removed.
+                </p>
               </div>
             </div>
             <div className="space-y-2 pb-2">
@@ -572,16 +564,10 @@ export default function SchoolManagementPage() {
                 <Label className="text-[18px]">Total Teacher</Label>
               </div>
               <div>
-                <Input
-                  value={formState.totalTeacher}
-                  onChange={(event) =>
-                    setFormState((prev) => ({
-                      ...prev,
-                      totalTeacher: event.target.value,
-                    }))
-                  }
-                  placeholder="10"
-                />
+                <Input value="0" readOnly aria-label="Total Teacher" />
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Calculated automatically as teacher accounts are added or removed.
+                </p>
               </div>
             </div>
             <div className="space-y-2 pb-2">
