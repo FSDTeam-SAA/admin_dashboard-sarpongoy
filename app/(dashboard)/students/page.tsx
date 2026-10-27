@@ -312,6 +312,7 @@ export default function StudentsPage() {
       toast.success("Student deleted successfully");
       void queryClient.invalidateQueries({ queryKey: ["students"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      void queryClient.invalidateQueries({ queryKey: ["schools"] });
     },
     onError: (error) => {
       setDeleteTargetId(null);
